@@ -534,6 +534,19 @@ static int predicate_cmpkey(const void *ptr1, const void *ptr2, const void *para
 	return p1->val_off < p2->val_off ? -1 : 1;
 }
 
+// How '.'/2 orders against c, a term that is not a list, as the compound branch below would.
+
+static int index_cmpdot(cell *c)
+{
+	if (!is_compound(c))
+		return 1;
+
+	if (get_arity(c) != 2)
+		return get_arity(c) > 2 ? -1 : 1;
+
+	return strcmp(".", C_STR(m, c));
+}
+
 static int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, void *l)
 {
 	cell *p1 = (cell*)ptr1;
@@ -541,6 +554,14 @@ static int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, 
 
 	if (is_var(p1) || is_var(p2))
 		return 0;
+
+	// A string is a list, so it orders as one and never as the atom of the same text.
+
+	if (is_string(p1) && !is_list(p2))
+		return index_cmpdot(p2);
+
+	if (is_string(p2) && !is_list(p1))
+		return -index_cmpdot(p1);
 
 	if (is_smallint(p1)) {
 		if (is_smallint(p2)) {
@@ -592,7 +613,7 @@ static int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, 
 		else
 			return -1;
 	} else if (is_string(p1) && is_string(p2)) {
-		return strcmp(C_STR(m, p1), C_STR(m, p2));
+		return _CMP_SLICES(m, p1, p2);		// slices are not NUL-terminated
 	} else if (is_list(p1) && is_list(p2)) {
 		PROLOG_LIST_HANDLER(p1);
 		PROLOG_LIST_HANDLER(p2);
