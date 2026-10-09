@@ -1072,6 +1072,7 @@ void leave_predicate(query *q, predicate *pr, uint64_t dbgen, bool is_final)
 		pr->idx3_want = 0;
 		pr->is_var_in_head = false;
 		pr->is_var_in_first_arg = false;
+		pr->is_open_first_arg = false;
 		pr->is_var_in_idx2_arg = false;
 		pr->idx2_arg = 0;
 	} else if (pr->is_var_in_head || pr->is_var_in_first_arg || pr->is_var_in_idx2_arg) {
@@ -2501,7 +2502,9 @@ static bool find_key(query *q, predicate *pr, cell *key, pl_ctx key_ctx)
 	int idx_arg = 0, idx_arg2 = -1;
 	bool composite = false;
 
-	if (arg1 && (is_var(arg1) || pr->is_var_in_first_arg)) {
+	// A clause keyed f(_) is kept out of the overflow, so a compound key that might match it walks the clauses.
+
+	if (arg1 && (is_var(arg1) || pr->is_var_in_first_arg || (pr->is_open_first_arg && !key_chainable(arg1)))) {
 		if (!pr->idx2 || pr->is_var_in_idx2_arg) {
 			INDEX_PROFILE_MODE(ip, linear);
 			INDEX_PROFILE_CANDIDATES(ip, pr->cnt);
@@ -2525,7 +2528,7 @@ static bool find_key(query *q, predicate *pr, cell *key, pl_ctx key_ctx)
 	} else if (arg1) {
 		cell *argn = pr->idx2_arg ? deref(q, get_nth_arg(key, pr->idx2_arg), key_ctx) : NULL;
 		const bool both_bound = argn && !is_var(argn) && !pr->is_var_in_first_arg
-			&& !pr->is_var_in_idx2_arg;
+			&& !pr->is_open_first_arg && !pr->is_var_in_idx2_arg;
 
 		// Both keys atomic: every clause with both is on both chains, so walk the shorter. Only two long
 		// chains call for the composite index, and once it is built the chains are not consulted.

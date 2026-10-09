@@ -387,6 +387,7 @@ static void abolish_predicate(predicate *pr)
 	pr->needs_index = false;
 	pr->is_var_in_head = false;
 	pr->is_var_in_first_arg = false;
+	pr->is_open_first_arg = false;
 	pr->is_var_in_idx2_arg = false;
 	pr->idx2_arg = 0;
 
@@ -422,6 +423,7 @@ static void destroy_predicate(module *m, predicate *pr)
 	pr->needs_index = false;
 	pr->is_var_in_head = false;
 	pr->is_var_in_first_arg = false;
+	pr->is_open_first_arg = false;
 	pr->is_var_in_idx2_arg = false;
 	pr->idx2_arg = 0;
 
@@ -719,7 +721,7 @@ void build_predicate_composite_index(predicate *pr)
 	if (pr->idx3 || pr->no_idx3 || !pr->idx1 || !pr->idx2_arg)
 		return;
 
-	if (pr->is_var_in_first_arg || pr->is_var_in_idx2_arg)
+	if (pr->is_var_in_first_arg || pr->is_open_first_arg || pr->is_var_in_idx2_arg)
 		return;
 
 	skiplist *idx3 = sl_create(index_cmpkey2, NULL, pr);
@@ -778,6 +780,18 @@ bool key_chainable(const cell *c)
 	return is_atomic(c) && !is_string(c);
 }
 
+// A key with a variable in it (f(_) equal to both f(1) and f(2)) has no place in a skiplist order.
+
+bool key_unorderable(const cell *c)
+{
+	for (pl_idx i = 0; i < c->num_cells; i++) {
+		if (is_var(c+i))
+			return true;
+	}
+
+	return false;
+}
+
 static void keyhead_del(void *k, void *v, const void *p)
 {
 	if (kval_single(v))
@@ -803,6 +817,12 @@ static cell *chain_key(const predicate *pr, cell *head, unsigned k)
 
 static bool chain_link(skiplist *idx, skiplist *ovf, cell *key, rule *r, unsigned k, bool append)
 {
+	// An unorderable key would leave its neighbours out of order even once retracted, so it stays out:
+	// lookups that could match it walk the clauses instead.
+
+	if (key_unorderable(key))
+		return true;
+
 	if (!key_chainable(key))
 		return append ? sl_app(ovf, key, r) : sl_set(ovf, key, r);
 
@@ -951,6 +971,9 @@ void index_remove_clause(predicate *pr, rule *r)
 
 		cell *key = chain_key(pr, c, k);
 		void *v = NULL;
+
+		if (key_unorderable(key))
+			continue;
 
 		if (!key_chainable(key))
 			sl_rem(k ? pr->ovf2 : pr->ovf1, key, r);
@@ -2036,6 +2059,8 @@ static bool check_not_multifile(module *m, predicate *pr, rule *r)
 			pr->needs_index = false;
 			pr->is_var_in_head = false;
 			pr->is_var_in_first_arg = false;
+			pr->is_open_first_arg = false;
+	pr->is_open_first_arg = false;
 			pr->is_var_in_idx2_arg = false;
 			pr->idx2_arg = 0;
 			TPL_free(r);
@@ -2597,6 +2622,7 @@ void recheck_var_in_indexed_args(predicate *pr)
 {
 	pr->is_var_in_head = false;
 	pr->is_var_in_first_arg = false;
+	pr->is_open_first_arg = false;
 	pr->is_var_in_idx2_arg = false;
 
 	for (rule *r = pr->head; r; r = r->next) {
@@ -2616,11 +2642,13 @@ void recheck_var_in_indexed_args(predicate *pr)
 
 		if (is_var(arg1))
 			pr->is_var_in_first_arg = true;
+		else if (key_unorderable(arg1))
+			pr->is_open_first_arg = true;
 
-		if (pr->idx2 && is_var(get_nth_arg(c, pr->idx2_arg)))
+		if (pr->idx2 && key_unorderable(get_nth_arg(c, pr->idx2_arg)))
 			pr->is_var_in_idx2_arg = true;
 
-		if (pr->is_var_in_head && pr->is_var_in_first_arg && pr->is_var_in_idx2_arg)
+		if (pr->is_var_in_head && pr->is_var_in_first_arg && pr->is_open_first_arg && pr->is_var_in_idx2_arg)
 			return;
 	}
 }
@@ -2680,7 +2708,7 @@ void build_predicate_index(predicate *pr)
 		bool has_var = false;
 
 		for (rule *cl2 = pr->head; cl2; cl2 = cl2->next) {
-			if (!cl2->dbgen_retracted && is_var(get_nth_arg(get_head(cl2->cl.cells), n))) {
+			if (!cl2->dbgen_retracted && key_unorderable(get_nth_arg(get_head(cl2->cl.cells), n))) {
 				has_var = true;
 				break;
 			}
@@ -2711,7 +2739,7 @@ void build_predicate_index(predicate *pr)
 	pr->ovf1 = ovf1;
 	pr->ovf2 = ovf2;
 
-	bool var_in_head = false, var_in_first_arg = false;
+	bool var_in_head = false, var_in_first_arg = false, open_first_arg = false;
 
 	for (rule *cl2 = pr->head; cl2; cl2 = cl2->next) {
 		if (cl2->dbgen_retracted)
@@ -2725,6 +2753,8 @@ void build_predicate_index(predicate *pr)
 
 		if (get_arity(c) && is_var(FIRST_ARG(c)))
 			var_in_first_arg = true;
+		else if (get_arity(c) && key_unorderable(FIRST_ARG(c)))
+			open_first_arg = true;
 
 		// An index missing a clause would lose answers, so a failure leaves none at all.
 
@@ -2738,6 +2768,7 @@ void build_predicate_index(predicate *pr)
 
 	pr->is_var_in_head = var_in_head;
 	pr->is_var_in_first_arg = var_in_first_arg;
+	pr->is_open_first_arg = open_first_arg;
 	pr->is_var_in_idx2_arg = false;		// idx2_arg was picked to have none
 
 	pl_publish_barrier();				// idx1 is the gate readers test, so it goes last
@@ -2787,14 +2818,16 @@ static void assert_commit(module *m, rule *r, predicate *pr, bool append)
 
 	if (arg1 && is_var(arg1))
 		pr->is_var_in_first_arg = true;
+	else if (arg1 && key_unorderable(arg1))
+		pr->is_open_first_arg = true;
 
-	if (pr->idx2 && is_var(get_nth_arg(c, pr->idx2_arg)))
+	if (pr->idx2 && key_unorderable(get_nth_arg(c, pr->idx2_arg)))
 		pr->is_var_in_idx2_arg = true;
 
 	// A variable in either key argument cannot be ordered, so the composite index goes and
 	// does not come back: the shape it answers no longer holds for this predicate.
 
-	if (pr->idx3 && (is_var(k1) || (pr->idx2_arg && is_var(get_nth_arg(c, pr->idx2_arg))))) {
+	if (pr->idx3 && (key_unorderable(k1) || (pr->idx2_arg && key_unorderable(get_nth_arg(c, pr->idx2_arg))))) {
 		sl_destroy(pr->idx3);
 		pr->idx3 = NULL;
 		pr->no_idx3 = true;

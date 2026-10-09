@@ -89,6 +89,7 @@ typedef struct keyhead_ {
 } keyhead;
 
 bool key_chainable(const cell *c);
+bool key_unorderable(const cell *c);
 
 static inline bool kval_single(const void *v) { return (uintptr_t)v & 1; }
 static inline rule *kval_rule(const void *v) { return (rule*)((uintptr_t)v & ~(uintptr_t)1); }

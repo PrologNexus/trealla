@@ -323,6 +323,7 @@ bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
 	pr->no_idx3 = false;
 	pr->is_var_in_head = false;
 	pr->is_var_in_first_arg = false;
+	pr->is_open_first_arg = false;
 	pr->is_var_in_idx2_arg = false;
 	pr->idx2_arg = 0;
 	pr->is_processed = false;
