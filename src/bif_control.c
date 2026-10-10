@@ -394,15 +394,15 @@ bool bif_soft_if_then_2(query *q)
 
 // if -> then ; else
 
-static bool do_if_then_else(query *q, cell *p1, cell *p2, cell *p3)
+static bool do_if_then_else(query *q, cell *p1, cell *p2, pl_ctx p1_ctx)
 {
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, q->st.cur_ctx, 3+p2->num_cells+2);
+	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 3+p2->num_cells+2);
 	CHECKED(tmp);
 	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_cut_s, bif_iso_cut_0, 0, 0);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
-	num_cells += dup_cells_by_ref(tmp+num_cells, p2, q->st.cur_ctx, p2->num_cells);
+	num_cells += dup_cells_by_ref(tmp+num_cells, p2, p1_ctx, p2->num_cells);
 	make_instr(tmp+num_cells++, g_true_s, bif_iso_true_0, 0, 0); // Why???
 	make_call(q, tmp+num_cells);
 	CHECKED(push_barrier(q));
@@ -412,16 +412,16 @@ static bool do_if_then_else(query *q, cell *p1, cell *p2, cell *p3)
 
 // if *-> then ; else
 
-static bool do_soft_if_then_else(query *q, cell *p1, cell *p2, cell *p3)
+static bool do_soft_if_then_else(query *q, cell *p1, cell *p2, pl_ctx p1_ctx)
 {
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, q->st.cur_ctx, 4+p2->num_cells+2);
+	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 4+p2->num_cells+2);
 	CHECKED(tmp);
 	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_sys_cut_s, bif_sys_cut_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
-	num_cells += dup_cells_by_ref(tmp+num_cells, p2, q->st.cur_ctx, p2->num_cells);
+	num_cells += dup_cells_by_ref(tmp+num_cells, p2, p1_ctx, p2->num_cells);
 	make_instr(tmp+num_cells++, g_true_s, bif_iso_true_0, 0, 0); // Why???
 	make_call(q, tmp+num_cells);
 	CHECKED(push_barrier(q));
@@ -443,7 +443,7 @@ static bool bif_if_3(query *q)
 		return true;
 	}
 
-	return do_soft_if_then_else(q, p1, p2, p3);
+	return do_soft_if_then_else(q, p1, p2, q->st.cur_ctx);
 }
 
 // goal ; goal
@@ -455,25 +455,18 @@ static bool bif_iso_disjunction_2(query *q)
 		return true;
 	}
 
-	cell *c = q->st.instr+1;
+	GET_FIRST_ARG(p1,callable);
 
-	if (is_callable(c) && c->bif_ptr) {
-		if (c->bif_ptr->fn == bif_iso_if_then_2) {
-			cell *p1 = c + 1;
-			cell *p2 = p1 + p1->num_cells;
-			cell *p3 = p2 + p2->num_cells;
-			return do_if_then_else(q, p1, p2, p3);
-		}
+	// Deref first: the LHS may be a variable bound to (C -> T) at run time.
 
-		if (c->bif_ptr->fn == bif_soft_if_then_2) {
-			cell *p1 = c + 1;
-			cell *p2 = p1 + p1->num_cells;
-			cell *p3 = p2 + p2->num_cells;
-			return do_soft_if_then_else(q, p1, p2, p3);
-		}
+	if (is_interned(p1) && (get_arity(p1) == 2)) {
+		if (p1->val_off == g_if_then_s)
+			return do_if_then_else(q, p1+1, p1+1+p1[1].num_cells, p1_ctx);
+
+		if (p1->val_off == g_soft_cut_s)
+			return do_soft_if_then_else(q, p1+1, p1+1+p1[1].num_cells, p1_ctx);
 	}
 
-	GET_FIRST_ARG(p1,callable);
 	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 2);
 	CHECKED(tmp);
 	pl_idx num_cells = p1->num_cells;
