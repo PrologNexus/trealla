@@ -480,13 +480,16 @@ static bool bif_bb_get_2(query *q)
 		}
 	}
 
-	prolog_unlock(q->pl);
-	cell *tmp = val->flags & FLAG_LIVE ?
+	// Copy out before unlocking: a bb_put in another thread frees the old value.
+
+	bool live = val->flags & FLAG_LIVE;
+	cell *tmp = live ?
 		bb_import_term_to_heap(q, val, q->st.cur_ctx) :
 		import_term(q, val, q->st.cur_ctx);
+	prolog_unlock(q->pl);
 	CHECKED(tmp);
 
-	if (!(val->flags & FLAG_LIVE) && is_compound(tmp) && (get_arity(tmp) == 1)) {
+	if (!live && is_compound(tmp) && (get_arity(tmp) == 1)) {
 		tmp = bb_reattach_attv(q, tmp);
 		CHECKED(tmp);
 	}

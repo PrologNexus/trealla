@@ -1,0 +1,14 @@
+% bb_get/2 copied the stored value out after dropping the lock, so a
+% bb_put/2 in another thread could free it mid-copy and crash.
+
+:- initialization(main).
+
+inc(0) :- !.
+inc(N) :- bb_get(c, V0), V is V0+1, bb_update(c, V0, V) -> N1 is N-1, inc(N1) ; inc(N).
+
+main :-
+	bb_put(c, 0),
+	findall(T, (between(1, 4, _), thread_create(inc(1000), T, [])), Ts),
+	maplist(thread_join, Ts),
+	bb_get(c, V),
+	( integer(V) -> writeln(done) ; writeln(V) ).
