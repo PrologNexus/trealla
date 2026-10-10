@@ -1,0 +1,2 @@
+thread_sees(existence_error(variable,k))
+main_sees(main)

@@ -5,5 +5,4 @@ t_nb_copies: copied
 t_b_shares: f(1)
 t_missing: existence_error(variable,nokey)
 t_key: type_error(atom,f(x))
-t_thread: main
 t_attr: still_frozen
