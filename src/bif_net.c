@@ -285,7 +285,8 @@ static bool bif_sys_accept_2(query *q)
 #endif
 
 	if (str->ssl) {
-		str2->sslptr = tpl_enable_ssl(fd, str->filename, true, str->level, NULL);
+		const char *reason;
+		str2->sslptr = tpl_enable_ssl(fd, str->filename, true, false, NULL, &reason);
 
 		if (!str2->sslptr) {
 			close(fd);
@@ -322,8 +323,8 @@ static bool bif_sys_client_5(query *q)
 	GET_NEXT_ARG(p4,var);
 	GET_NEXT_ARG(p5,list_or_nil);
 	char hostname[1024], path[1024*4];
-	char *certfile = NULL;
-	int udp = 0, nodelay = 1, ssl = 0, domain = 0, level = 0;
+	char *cafile = NULL;
+	int udp = 0, nodelay = 1, ssl = 0, domain = 0, level = 0, verify = 1;
 	hostname[0] = path[0] = '\0';
 	unsigned port = 80;
 	char *filename = NULL;
@@ -369,11 +370,16 @@ static bool bif_sys_client_5(query *q)
 
 				if (is_atom(c))
 					ssl = !CMP_STRING_TO_CSTR(q, c, "true") ? 1 : 0;
-			} else if (!CMP_STRING_TO_CSTR(q, c, "certfile")) {
+			} else if (!CMP_STRING_TO_CSTR(q, c, "cacert")) {
 				c = deref(q, c + 1, c_ctx);
 
 				if (is_atom(c))
-					certfile = C_STR(q, c);
+					cafile = C_STR(q, c);
+			} else if (!CMP_STRING_TO_CSTR(q, c, "verify")) {
+				c = deref(q, c + 1, c_ctx);
+
+				if (is_atom(c))
+					verify = !CMP_STRING_TO_CSTR(q, c, "false") ? 0 : 1;
 			} else if (!CMP_STRING_TO_CSTR(q, c, "scheme")) {
 				c = deref(q, c + 1, c_ctx);
 
@@ -460,8 +466,21 @@ static bool bif_sys_client_5(query *q)
 #endif
 
 	if (str->ssl) {
-		str->sslptr = tpl_enable_ssl(fd, hostname, false, str->level, certfile);
-		CHECKED(str->sslptr);
+		const char *reason;
+		str->sslptr = tpl_enable_ssl(fd, hostname, false, verify, cafile, &reason);
+
+		if (!str->sslptr) {
+			str->ssl = false;
+			stream_close(q, n);
+
+			if (reason && !strcmp(reason, "unavailable")) {
+				cell tmp;
+				make_atom(&tmp, new_atom(q->pl, "ssl"));
+				return throw_error(q, &tmp, q->st.cur_ctx, "existence_error", "feature");
+			}
+
+			return throw_error(q, p1, p1_ctx, "ssl_error", reason ? reason : "handshake_failed");
+		}
 	}
 
 	// Always non-blocking now, not just for a task - see the matching
@@ -490,7 +509,8 @@ static bool bif_sys_server_tls_2(query *q)
 	int n = get_stream(q, pstr);
 	stream *str = &q->pl->streams[n];
 	int fd = fileno(str->fp_in);
-	str->sslptr = tpl_enable_ssl(fd, NULL, true, 0, NULL);
+	const char *reason;
+	str->sslptr = tpl_enable_ssl(fd, NULL, true, false, NULL, &reason);
 
 	if (!str->sslptr)
 		return false;						// FIX 1: bool, not NULL
@@ -510,16 +530,21 @@ static bool bif_sys_client_tls_4(query *q)
 {
 	GET_FIRST_ARG(pstr,stream);
 	GET_NEXT_ARG(p1,atom);
-	GET_NEXT_ARG(p2,integer);			// FIX 8: read the declared level arg
-	GET_NEXT_ARG(p3,atom_or_var);		// FIX 8: read the declared certfile arg
+	GET_NEXT_ARG(p2,atom);				// verify: true or false
+	GET_NEXT_ARG(p3,atom_or_var);		// cacert file, else the system store
 	int n = get_stream(q, pstr);
 	stream *str = &q->pl->streams[n];
 	int fd = fileno(str->fp_in);
 	const char *hostname = C_STR(q, p1);
-	int level = (int)get_smallint(p2);
-	const char *certfile = is_atom(p3) ? C_STR(q, p3) : NULL;
-	str->sslptr = tpl_enable_ssl(fd, hostname, false, level, certfile);
-	return str->sslptr != NULL;
+	bool verify = CMP_STRING_TO_CSTR(q, p2, "false") != 0;
+	const char *cafile = is_atom(p3) ? C_STR(q, p3) : NULL;
+	const char *reason;
+	str->sslptr = tpl_enable_ssl(fd, hostname, false, verify, cafile, &reason);
+
+	if (!str->sslptr)
+		return throw_error(q, p1, p1_ctx, "ssl_error", reason ? reason : "handshake_failed");
+
+	return true;
 }
 
 static bool bif_sys_current_host_1(query *q)
@@ -824,7 +849,7 @@ builtins g_net_bifs[] =
 	{"$accept", 2, bif_sys_accept_2, "+stream,--stream", false, false, BLAH},
 	{"$client", 5, bif_sys_client_5, "+source_sink,-atom,-atom,--stream,+list", false, false, BLAH},
 	{"$server_tls", 2, bif_sys_server_tls_2, "+stream,-atom", false, false, BLAH},
-	{"$client_tls", 4, bif_sys_client_tls_4, "+stream,+atom,+integer,+source_sink", false, false, BLAH},
+	{"$client_tls", 4, bif_sys_client_tls_4, "+stream,+atom,+atom,+source_sink", false, false, BLAH},
 	{"$current_host", 1, bif_sys_current_host_1, "-atom", false, false, BLAH},
 	{"$peer_addr", 3, bif_sys_peer_addr_3, "+stream,-atom,-integer", false, false, BLAH},
 	{"$udp_recv", 5, bif_sys_udp_recv_5, "+stream,-string,-atom,-integer,+list", false, false, BLAH},

@@ -408,61 +408,102 @@ static void tpl_set_blocking(stream *str)
 #endif
 }
 
-void *tpl_enable_ssl(int fd, const char *hostname, bool is_server, int level, const char *certfile)
-{
 #if USE_OPENSSL
-	if (!g_ctx_use_cnt++) {
-		SSL_load_error_strings();
-		g_ctx = SSL_CTX_new(is_server?TLS_SERVER_METHOD_FUNC():TLS_CLIENT_METHOD_FUNC());
-		//SSL_CTX_set_cipher_list(g_ctx, DEFAULT_CIPHERS);
+// A client gets its own context, so verification settings never leak into
+// the server's shared one, and the SSL keeps it alive until SSL_free().
+
+static SSL *client_ssl(int fd, const char *hostname, bool verify, const char *cafile, const char **reason)
+{
+	SSL_CTX *ctx = SSL_CTX_new(TLS_CLIENT_METHOD_FUNC());
+
+	if (!ctx) {
+		*reason = "handshake_failed";
+		return NULL;
 	}
 
-	SSL *ssl = SSL_new(g_ctx);
-	SSL_set_ssl_method(ssl, is_server?TLS_SERVER_METHOD_FUNC():TLS_CLIENT_METHOD_FUNC());
-	//SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-	//SSL_set_verify(ssl, SSL_VERIFY_NONE, 0);
-
-	if (!is_server && certfile) {
-		if (!SSL_CTX_use_certificate_file(g_ctx, certfile, SSL_FILETYPE_PEM)) {
-			printf("SSL load certificate failed\n");
-			ERR_print_errors_fp(stderr);
-			close(fd);
-			SSL_free(ssl);
+	if (verify) {
+		if (cafile ? !SSL_CTX_load_verify_locations(ctx, cafile, NULL) : !SSL_CTX_set_default_verify_paths(ctx)) {
+			SSL_CTX_free(ctx);
+			ERR_clear_error();
+			*reason = "cacert_load_failed";
 			return NULL;
 		}
 
-		SSL_CTX_set_default_verify_paths(g_ctx);
-
-		if (level > 0)
-			SSL_set_verify(ssl, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, 0);
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 	}
+
+	SSL *ssl = SSL_new(ctx);
+	SSL_CTX_free(ctx);
+
+	if (!ssl) {
+		*reason = "handshake_failed";
+		return NULL;
+	}
+
+	// A numeric host is checked against the certificate's IP addresses and,
+	// per RFC 6066, never sent as SNI.
+
+	unsigned char addr[sizeof(struct in6_addr)];
+	bool is_ip = (inet_pton(AF_INET, hostname, addr) == 1) || (inet_pton(AF_INET6, hostname, addr) == 1);
+
+	if (verify) {
+		if (is_ip)
+			X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), hostname);
+		else
+			SSL_set1_host(ssl, hostname);
+	}
+
+	if (!is_ip)
+		SSL_set_tlsext_host_name(ssl, hostname);
 
 	SSL_set_fd(ssl, fd);
 
-	if (is_server) {
-		if (SSL_accept(ssl) == -1) {
-			fprintf(stderr, "SSL_accept failed\n");
-			ERR_print_errors_fp(stderr);
-			SSL_free(ssl);
-			return NULL;
-		}
-	} else {
-		SSL_set_tlsext_host_name(ssl, hostname);
-
-		if (SSL_connect(ssl) <= 0) {
-			fprintf(stderr, "SSL_connect failed\n");
-			ERR_print_errors_fp(stderr);
-			SSL_free(ssl);
-			return NULL;
-		}
+	if (SSL_connect(ssl) <= 0) {
+		long v = SSL_get_verify_result(ssl);
+		*reason = v == X509_V_ERR_HOSTNAME_MISMATCH ? "hostname_mismatch"
+			: v == X509_V_ERR_IP_ADDRESS_MISMATCH ? "ip_address_mismatch"
+			: v != X509_V_OK ? "certificate_verify_failed"
+			: "handshake_failed";
+		SSL_free(ssl);
+		ERR_clear_error();
+		return NULL;
 	}
+
+	return ssl;
+}
+#endif
+
+void *tpl_enable_ssl(int fd, const char *hostname, bool is_server, bool verify, const char *cafile, const char **reason)
+{
+	*reason = NULL;
+
+#if USE_OPENSSL
+	if (!is_server)
+		return client_ssl(fd, hostname, verify, cafile, reason);
+
+	if (!g_ctx_use_cnt++) {
+		SSL_load_error_strings();
+		g_ctx = SSL_CTX_new(TLS_SERVER_METHOD_FUNC());
+	}
+
+	SSL *ssl = SSL_new(g_ctx);
+	SSL_set_fd(ssl, fd);
+
+	if (SSL_accept(ssl) == -1) {
+		fprintf(stderr, "SSL_accept failed\n");
+		ERR_print_errors_fp(stderr);
+		SSL_free(ssl);
+		return NULL;
+	}
+
 	return ssl;
 #else
 	(void) fd;
 	(void) hostname;
 	(void) is_server;
-	(void) level;
-	(void) certfile;
+	(void) verify;
+	(void) cafile;
+	*reason = "unavailable";
 	return NULL;
 #endif
 }
@@ -910,10 +951,12 @@ int tpl_close(stream *str)
 {
 #if USE_OPENSSL
 	if (str->ssl) {
+		// Only server-side streams hold a count on the shared server context.
+		bool is_client = str->sslptr && !SSL_is_server((SSL*)str->sslptr);
 		SSL_shutdown((SSL*)str->sslptr);
 		SSL_free((SSL*)str->sslptr);
 
-		if (!--g_ctx_use_cnt) {
+		if (!is_client && !--g_ctx_use_cnt) {
 			SSL_CTX_free(g_ctx);
 			g_ctx = NULL;
 		}
