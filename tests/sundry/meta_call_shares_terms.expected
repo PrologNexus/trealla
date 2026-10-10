@@ -4,4 +4,5 @@ t_ignore: c(3)
 t_findall: c(3)
 t_findnsols: [c(2)/[x,x],c(4)/[x,x],c(5)/[x]]
 t_chunks_hide: [unbound/[1],unbound/[2]]
+t_cut_via_var: [call-kept,once-kept,var-kept,not-kept,findall-kept]
 t_page: [[a,b],[c,d,e],[f,g]]
