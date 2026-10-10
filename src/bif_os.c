@@ -272,6 +272,25 @@ static bool bif_sleep_1(query *q)
 
 	while ((ms > 0) && !q->halt && !q->pl->halt) {
 		CHECK_INTERRUPT();
+
+#if USE_THREADS
+		// A thread signal runs now, as in SWI, not when the sleep is over:
+		// go on as sleep(Remaining), so the engine delivers it first.
+
+		thread *t = q->thread_ptr;
+
+		if (t && list_count(&t->signals)) {
+			cell goal[2];
+			make_instr(goal, new_atom(q->pl, "sleep"), bif_sleep_1, 1, 1);
+			make_float(goal+1, ms / 1000.0);
+			cell *tmp = prepare_call(q, CALL_NOSKIP, goal, q->st.cur_ctx, 1);
+			CHECKED(tmp);
+			make_call(q, tmp+goal->num_cells);
+			q->st.instr = tmp;
+			return true;
+		}
+#endif
+
 		msleep(10);
 
 		if (errno == EINTR)
