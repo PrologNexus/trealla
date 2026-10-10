@@ -997,9 +997,13 @@ static bool bif_listing_0(query *q)
 	return true;
 }
 
-static bool save_name(FILE *fp, query *q, pl_idx name, pl_int arity, bool alt, bool dump)
+// List from m, as given by M:PI, else the module the call is running in.
+
+static bool save_name(FILE *fp, query *q, module *m, pl_idx name, pl_int arity, bool alt, bool dump)
 {
-	module *m = q->st.dbe ? q->st.dbe->owner->m : q->st.m;
+	if (!m)
+		m = q->st.dbe ? q->st.dbe->owner->m : q->st.m;
+
 	q->listing = true;
 	bool any = false;
 
@@ -1056,15 +1060,20 @@ static bool bif_listing_1(query *q)
 	pl_idx name = p1->val_off;
 	pl_int arity = -1;
 
+	module *m = NULL;
+
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
-		module *m = find_module(q->pl, C_STR(q, cm));
+		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
 			return throw_error(q, cm, p1_ctx, "existence_error", "module");
 
 		p1 += p1->num_cells;
+		p1 = deref(q, p1, p1_ctx);
+		p1_ctx = q->latest_ctx;
+		name = p1->val_off;
 	}
 
 	if (get_arity(p1)) {
@@ -1100,7 +1109,7 @@ static bool bif_listing_1(query *q)
 
 	int n = q->pl->current_output;
 	stream *str = &q->pl->streams[n];
-	return save_name(str->fp, q, name, arity, false, false);
+	return save_name(str->fp, q, m, name, arity, false, false);
 }
 
 static bool bif_sys_xlisting_1(query *q)
@@ -1109,15 +1118,20 @@ static bool bif_sys_xlisting_1(query *q)
 	pl_idx name = p1->val_off;
 	pl_int arity = -1;
 
+	module *m = NULL;
+
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
-		module *m = find_module(q->pl, C_STR(q, cm));
+		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
 			return throw_error(q, cm, p1_ctx, "existence_error", "module");
 
 		p1 += p1->num_cells;
+		p1 = deref(q, p1, p1_ctx);
+		p1_ctx = q->latest_ctx;
+		name = p1->val_off;
 	}
 
 	if (get_arity(p1)) {
@@ -1153,7 +1167,7 @@ static bool bif_sys_xlisting_1(query *q)
 
 	int n = q->pl->current_output;
 	stream *str = &q->pl->streams[n];
-	save_name(str->fp, q, name, arity, true, false);
+	save_name(str->fp, q, m, name, arity, true, false);
 	fprintf(str->fp, "\n");
 	return true;
 }
@@ -1174,15 +1188,20 @@ static bool bif_sys_dlisting_1(query *q)
 	pl_idx name = p1->val_off;
 	pl_int arity = -1;
 
+	module *m = NULL;
+
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
-		module *m = find_module(q->pl, C_STR(q, cm));
+		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
 			return throw_error(q, cm, p1_ctx, "existence_error", "module");
 
 		p1 += p1->num_cells;
+		p1 = deref(q, p1, p1_ctx);
+		p1_ctx = q->latest_ctx;
+		name = p1->val_off;
 	}
 
 	if (get_arity(p1)) {
@@ -1218,7 +1237,7 @@ static bool bif_sys_dlisting_1(query *q)
 
 	int n = q->pl->current_output;
 	stream *str = &q->pl->streams[n];
-	save_name(str->fp, q, name, arity, false, true);
+	save_name(str->fp, q, m, name, arity, false, true);
 	fprintf(str->fp, "\n");
 	return true;
 }

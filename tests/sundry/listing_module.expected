@@ -1,0 +1,11 @@
+% lists:lm_probe/1
+lm_probe(1).
+lm_probe(2) :-
+   user:true.
+% lists:lm_probe
+lm_probe(1).
+lm_probe(2) :-
+   user:true.
+% lm_probe/1
+lm_probe(user_version).
+existence_error(module,nomod)
