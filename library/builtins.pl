@@ -104,8 +104,7 @@ flag(Key, Old, New) :-
 	).
 
 bb_update(K, O, N) :-
-	'$bb_get'(K, '$bb'(O)),
-	bb_put(K, N).
+	'$bb_update'(K, '$bb'(O), '$bb'(N)).
 
 :- help(writeln(+term), [iso(false),deprecated(true)]).
 :- help(writeln(+stream,+term), [iso(false),deprecated(true)]).

@@ -1,5 +1,6 @@
 % bb_get/2 copied the stored value out after dropping the lock, so a
-% bb_put/2 in another thread could free it mid-copy and crash.
+% bb_put/2 in another thread could free it mid-copy and crash. And
+% bb_update/3 was a get then a put, so racing threads lost updates.
 
 :- initialization(main).
 
@@ -11,4 +12,4 @@ main :-
 	findall(T, (between(1, 4, _), thread_create(inc(1000), T, [])), Ts),
 	maplist(thread_join, Ts),
 	bb_get(c, V),
-	( integer(V) -> writeln(done) ; writeln(V) ).
+	writeq(total(V)), nl.
