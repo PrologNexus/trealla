@@ -222,14 +222,17 @@ bool bif_iso_call_1(query *q)
 			return throw_error(q, p1, p1_ctx, "type_error", "callable");
 	}
 
+	// Check a clone, run the goal itself, as \+ does: running the clone
+	// gave the goal its own copy of every term a variable in it was bound
+	// to, so nb_setarg/3 on one did not reach the caller's.
+
 	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
-		p1 = clone_term_to_tmp(q, p1, p1_ctx);
-		CHECKED(p1);
+		cell *p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
 		bool status;
-		p1_ctx = q->st.cur_ctx;
 
-		if (!call_check(q, p1, &status, false))
+		if (!call_check(q, p1_clone, &status, false))
 			return status;
 	}
 
@@ -275,14 +278,17 @@ static bool bif_iso_once_1(query *q)
 			return throw_error(q, p1, p1_ctx, "type_error", "callable");
 	}
 
+	// Check a clone, run the goal itself, as \+ does: running the clone
+	// gave the goal its own copy of every term a variable in it was bound
+	// to, so nb_setarg/3 on one did not reach the caller's.
+
 	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
-		p1 = clone_term_to_tmp(q, p1, p1_ctx);
-		CHECKED(p1);
+		cell *p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
 		bool status;
-		p1_ctx = q->st.cur_ctx;
 
-		if (!call_check(q, p1, &status, false))
+		if (!call_check(q, p1_clone, &status, false))
 			return status;
 	}
 
@@ -309,14 +315,15 @@ static bool bif_ignore_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
+	// As call/1: check a clone, run the goal itself.
+
 	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
-		p1 = clone_term_to_tmp(q, p1, p1_ctx);
-		CHECKED(p1);
-		p1_ctx = q->st.cur_ctx;
+		cell *p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
 		bool status;
 
-		if (!call_check(q, p1, &status, false))
+		if (!call_check(q, p1_clone, &status, false))
 			return status;
 	}
 

@@ -1,0 +1,5 @@
+t_call: c(2)
+t_once: c(2)
+t_ignore: c(3)
+t_findall: c(3)
+t_page: [[a,b],[c,d,e],[f,g]]
