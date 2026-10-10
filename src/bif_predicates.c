@@ -4359,7 +4359,7 @@ static bool bif_must_be_4(query *q)
 	const char *src = C_STR(q, p2);
 
 	if (!strcmp(src, "var") && !is_var(p1))
-		return throw_error2(q, p1, p1_ctx, "uninstantiation_error", "not_sufficiently_instantiated", p3);
+		return throw_error2(q, p1, p1_ctx, "type_error", "var", p3);
 	else if (!strcmp(src, "nonvar") && is_var(p1))
 		return throw_error2(q, p1, p1_ctx, "instantiation_error", "instantiated", p3);
 
@@ -4502,7 +4502,7 @@ static bool do_must_be_2(query *q, cell *p2, pl_ctx p2_ctx, cell *p1, pl_ctx p1_
 	const char *src = C_STR(q, p2);
 
 	if (!strcmp(src, "var") && !is_var(p1))
-		return throw_error(q, p1, p1_ctx, "uninstantiation_error", "not_sufficiently_instantiated");
+		return throw_error(q, p1, p1_ctx, "type_error", "var");
 	else if (!strcmp(src, "nonvar") && is_var(p1))
 		return throw_error(q, p1, p1_ctx, "instantiation_error", "instantiated");
 
