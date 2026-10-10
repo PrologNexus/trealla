@@ -975,6 +975,7 @@ int tpl_close(stream *str)
 			// was ever actually drained to the kernel. This fd is going
 			// away regardless, so there is no cost to blocking here
 			// instead of dropping the tail of the stream.
+			str->is_closing = true;
 			tpl_set_blocking(str);
 			fflush(str->fp_out);
 #if !defined(_WIN32) && !defined(__wasi__)

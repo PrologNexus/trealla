@@ -778,6 +778,7 @@ struct stream_ {
 	int ungetch, srclen, chan, idx, port;
 	unsigned rows, cols;
 	uint8_t level, eof_action;
+	pl_atomic bool is_closing;			// set before a socket's shutdown, for an accept it wakes
 	bool is_active:1;
 	bool at_end_of_file:1;
 	bool bom:1;

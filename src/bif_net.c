@@ -232,13 +232,24 @@ static bool bif_sys_accept_2(query *q)
 	stream *str = &q->pl->streams[n];
 	char *peer_addr = NULL;
 	int peer_port = 0;
-	int fd = tpl_accept(str, &peer_addr, &peer_port);
+	int fd;
+
+	// A listener closed by another thread wakes this with an error, which
+	// must be reported, not waited on or turned into a silent failure. A
+	// client that gave up before being accepted (ECONNABORTED) is retried.
+
+	do {
+		fd = tpl_accept(str, &peer_addr, &peer_port);
+	} while ((fd == -1) && ((errno == EINTR) || (errno == ECONNABORTED)) && !str->is_closing);
 
 	if (fd == -1) {
-		if (q->is_task)
+		if (str->is_closing || !str->is_active)
+			return throw_error(q, pstr, pstr_ctx, "existence_error", "stream");
+
+		if (q->is_task && ((errno == EAGAIN) || (errno == EWOULDBLOCK)))
 			return do_yield_on_stream(q, str, false);
 
-		return false;
+		return throw_error(q, pstr, pstr_ctx, "socket_error", tpl_socket_errname(errno));
 	}
 
 	n = new_stream(q->pl);

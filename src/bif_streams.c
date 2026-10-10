@@ -425,6 +425,7 @@ int new_stream(prolog *pl)
 			continue;
 
 		str->timeout_ms = 0;
+		str->is_closing = false;
 		str->is_pipe = false;
 		str->is_popen = false;
 		str->is_socket = false;
