@@ -54,6 +54,16 @@ static void parse_host(const char *src, char hostname[1024], char path[4096], un
 		memmove(path, path+1, strlen(path+1)+1);
 }
 
+// A build without OpenSSL refuses TLS before any socket exists, rather than
+// open a plain one or fail obscurely later.
+
+static bool ssl_unavailable(query *q)
+{
+	cell tmp;
+	make_atom(&tmp, new_atom(q->pl, "ssl"));
+	return throw_error(q, &tmp, q->st.cur_ctx, "existence_error", "feature");
+}
+
 static bool bif_sys_server_3(query *q)
 {
 	GET_FIRST_ARG(p1,any);
@@ -169,6 +179,10 @@ static bool bif_sys_server_3(query *q)
 	const char *url = filename;
 	parse_host(url, hostname, path, &port, &ssl, &domain);
 	TPL_free(filename);
+
+	if (ssl && !USE_OPENSSL)
+		return ssl_unavailable(q);
+
 	int fd = domain
 		? tpl_domain_server(path, udp)
 		: tpl_server(hostname, port, udp, ssl?keyfile:NULL, ssl?certfile:NULL);
@@ -420,6 +434,9 @@ static bool bif_sys_client_5(query *q)
 	parse_host(url, hostname, path, &port, &ssl, &domain);
 	TPL_free(filename);
 
+	if (ssl && !USE_OPENSSL)
+		return ssl_unavailable(q);
+
 	int fd = domain
 		? tpl_domain_connect(path, udp)
 		: tpl_connect(hostname, port, udp, nodelay);
@@ -484,12 +501,6 @@ static bool bif_sys_client_5(query *q)
 			str->ssl = false;
 			stream_close(q, n);
 
-			if (reason && !strcmp(reason, "unavailable")) {
-				cell tmp;
-				make_atom(&tmp, new_atom(q->pl, "ssl"));
-				return throw_error(q, &tmp, q->st.cur_ctx, "existence_error", "feature");
-			}
-
 			return throw_error(q, p1, p1_ctx, "ssl_error", reason ? reason : "handshake_failed");
 		}
 	}
@@ -517,6 +528,9 @@ static bool bif_sys_server_tls_2(query *q)
 {
 	GET_FIRST_ARG(pstr,stream);
 	GET_NEXT_ARG(p1,atom_or_var);
+
+	if (!USE_OPENSSL)
+		return ssl_unavailable(q);
 	int n = get_stream(q, pstr);
 	stream *str = &q->pl->streams[n];
 	int fd = fileno(str->fp_in);
@@ -543,6 +557,9 @@ static bool bif_sys_client_tls_4(query *q)
 	GET_NEXT_ARG(p1,atom);
 	GET_NEXT_ARG(p2,atom);				// verify: true or false
 	GET_NEXT_ARG(p3,atom_or_var);		// cacert file, else the system store
+
+	if (!USE_OPENSSL)
+		return ssl_unavailable(q);
 	int n = get_stream(q, pstr);
 	stream *str = &q->pl->streams[n];
 	int fd = fileno(str->fp_in);
