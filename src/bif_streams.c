@@ -6876,6 +6876,46 @@ static bool bif_sys_capture_output_to_atom_1(query *q)
 	return ok;
 }
 
+// Run portray/1 on a term with current output captured, for format/2's ~p.
+
+char *portray_term_to_strbuf(query *q, cell *c, pl_ctx c_ctx)
+{
+	int n = q->pl->current_output;
+	stream *str = &q->pl->streams[n];
+
+	if (!begin_capture(q, str))
+		return NULL;
+
+	cell p1[1+c->num_cells];
+	make_instr(p1+0, new_atom(q->pl, "$portray"), NULL, 1, c->num_cells);
+	dup_cells_by_ref(p1+1, c, c_ctx, c->num_cells);
+	cell *tmp = prepare_call(q, CALL_SKIP, p1, q->st.cur_ctx, 1);
+	query *q2 = NULL;
+
+	if (tmp) {
+		make_end(tmp+p1->num_cells);
+		q2 = query_create_subquery(q, tmp);
+	}
+
+	if (q2) {
+		start(q2);
+		query_destroy(q2);
+	}
+
+	size_t at = capture_start(str);
+	size_t len = SB_strlen(str->sb) - at;
+	char *dst = q2 ? TPL_malloc(len+1) : NULL;
+
+	if (dst) {
+		const char *buf = SB_cstr(str->sb);		// a conditional expression, so bind it first
+		memcpy(dst, buf + at, len);
+		dst[len] = '\0';
+	}
+
+	end_capture(str);
+	return dst;
+}
+
 static bool bif_sys_capture_error_0(query *q)
 {
 	int n = q->pl->current_error;

@@ -721,64 +721,31 @@ bool do_format(query *q, cell *str, pl_ctx str_ctx, cell *p1, pl_ctx p1_ctx, cel
 			break;
 		}
 		case 'p': {
-			cell *tmp;
-			pl_idx num_cells;
 			cell pc = {0};
 			make_atom(&pc, new_atom(q->pl, "portray"));
 			set_arity(&pc, 1);
-
 			predicate *pr = find_predicate(q->st.m, &pc);
 
+			// Render into the buffer like the rest, not straight to a stream: an
+			// atom(_) sink has none, and text before the ~p must come first.
+
 			if (pr && pr->cnt) {
-				if (str) {
-					cell p1[1+1+c->num_cells];
-					make_instr(p1+0, new_atom(q->pl, "$portray"), NULL, 2, 1+c->num_cells);
-					p1[1] = *str;
-					dup_cells_by_ref(p1+2, c, c_ctx, c->num_cells);
-					tmp = prepare_call(q, CALL_SKIP, p1, q->st.cur_ctx, 1);
-					num_cells = p1->num_cells;
-				} else {
-					cell p1[1+c->num_cells];
-					make_instr(p1+0, new_atom(q->pl, "$portray"), NULL, 1, c->num_cells);
-					dup_cells_by_ref(p1+1, c, c_ctx, c->num_cells);
-					tmp = prepare_call(q, CALL_SKIP, p1, q->st.cur_ctx, 1);
-					num_cells = p1->num_cells;
+				char *tmpbuf2 = portray_term_to_strbuf(q, c, c_ctx);
+
+				if (!tmpbuf2) {
+					TPL_free(tmpbuf);
+					return throw_error(q, c, q->st.cur_ctx, "resource_error", "memory");
 				}
 
-				make_end(tmp+num_cells);
-				query *q2 = query_create_subquery(q, tmp);
-				start(q2);
-				query_destroy(q2);
+				len = strlen(tmpbuf2);
+				CHECK_BUF(len);
+				strcpy(dst, tmpbuf2);
+				TPL_free(tmpbuf2);
 				clear_write_options(q);
 				break;
 			}
-
-			if (!str) {
-				int n = q->pl->current_output;
-				stream *str2 = &q->pl->streams[n];
-				q->quoted = 1;
-				q->numbervars = true;
-				print_term_to_stream(q, str2, c, c_ctx, 1);
-				q->numbervars = false;
-				q->quoted = 0;
-
-				if (isatty(fileno(str2->fp)))
-					fflush(str2->fp);
-			} else {
-				int n = get_stream(q, str);
-				stream *str2 = &q->pl->streams[n];
-				q->quoted = 1;
-				q->numbervars = true;
-				print_term_to_stream(q, str2, c, c_ctx, 1);
-				q->numbervars = false;
-				q->quoted = 0;
-
-				if (isatty(fileno(str2->fp)))
-					fflush(str2->fp);
-			}
-
-			break;
 		}
+		// fallthrough: no portray/1, so print as ~q does
 
 		case 'k':
 		case 'q':
@@ -789,7 +756,7 @@ bool do_format(query *q, cell *str, pl_ctx str_ctx, cell *p1, pl_ctx p1_ctx, cel
 			bool canonical = false, quoted = false;
 			q->numbervars = true;
 
-			if (ch != 'q')
+			if ((ch != 'q') && (ch != 'p'))
 				q->double_quotes = true;
 
 			if (ch == 'k') {

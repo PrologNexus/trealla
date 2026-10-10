@@ -156,6 +156,7 @@ bool print_term(query *q, FILE *fp, cell *c, pl_ctx c_ctx, int running);
 bool print_term_to_stream(query *q, stream *str, cell *c, pl_ctx c_ctx, int running);
 bool find_exception_handler(query *q, char *ball);
 char *print_term_to_strbuf(query *q, cell *c, pl_ctx c_ctx, int running);
+char *portray_term_to_strbuf(query *q, cell *c, pl_ctx c_ctx);
 void clear_write_options(query *q);
 
 // The query's scratch parser, built on first use; NULL if it cannot be.
