@@ -21,6 +21,7 @@
 #if USE_OPENSSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
 static int g_ctx_use_cnt = 0;
 static SSL_CTX *g_ctx = NULL;
 #if OPENSSL_VERSION_NUMBER > 0x10100000L
@@ -443,8 +444,9 @@ static SSL *client_ssl(int fd, const char *hostname, bool verify, const char *ca
 	// A numeric host is checked against the certificate's IP addresses and,
 	// per RFC 6066, never sent as SNI.
 
-	unsigned char addr[sizeof(struct in6_addr)];
-	bool is_ip = (inet_pton(AF_INET, hostname, addr) == 1) || (inet_pton(AF_INET6, hostname, addr) == 1);
+	ASN1_OCTET_STRING *ip = a2i_IPADDRESS(hostname);	// OpenSSL's parser, so no socket headers
+	bool is_ip = ip != NULL;
+	ASN1_OCTET_STRING_free(ip);
 
 	if (verify) {
 		if (is_ip)
