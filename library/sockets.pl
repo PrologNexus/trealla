@@ -187,12 +187,14 @@ socket_server_open(Addr0, ServerSocket, Options) :-
 %    or just binary
 %
 socket_server_accept(ServerSocket, Client, Stream, Options) :-
-	must_be(var, Client),
 	must_be(var, Stream),
 	'$accept'(ServerSocket, Stream),
 	'$peer_addr'(Stream, Addr, Port),
-	Client = Addr:Port,
-	'$sock_opts'(Stream, Options).
+	'$sock_opts'(Stream, Options),
+	% Client is an output to unify, so a pattern such as Host:_ works; on a mismatch don't leak the stream
+	(	Client = Addr:Port -> true
+	;	close(Stream), fail
+	).
 
 
 
