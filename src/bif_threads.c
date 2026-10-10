@@ -1454,10 +1454,13 @@ bool do_signal(query *q, void *thread_ptr)
 	CHECKED(c);
 	unshare_cells(m->c, m->c->num_cells);	// FIX: release cell refs (was leaked)
 	TPL_free(m);
-	cell *tmp = prepare_call(q, CALL_NOSKIP, c, q->st.cur_ctx, 2);
+	// The engine delivers this before running q->st.instr, so the handler
+	// returns to that goal, not past it: make_call() skipped it, and any
+	// signal, even true, could wreck the thread it interrupted.
+
+	cell *tmp = prepare_call(q, CALL_NOSKIP, c, q->st.cur_ctx, 1);
 	ENSURE(tmp);
-	make_instr(tmp+c->num_cells+1, g_true_s, bif_iso_true_0, 0, 0);
-	make_call(q, tmp+c->num_cells);
+	make_call_redo(q, tmp+c->num_cells);
 	q->st.instr = tmp;
 	return true;
 }
