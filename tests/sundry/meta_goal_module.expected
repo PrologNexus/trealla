@@ -1,0 +1,5 @@
+t_zero: 2
+t_caret: 2
+t_bagof: [1,2]
+t_forall: ok
+t_user: 3

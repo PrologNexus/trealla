@@ -2260,6 +2260,21 @@ bool has_next_key(query *q)
 	return false;
 }
 
+// A closure (1..9) always gets the caller's module. A goal (0, or ^ for one
+// with V^ in front) needs it only from outside user: an unresolved call falls
+// back to user anyway, and goals written at user level stay as written.
+
+static bool meta_arg_wants_module(const query *q, const cell *m)
+{
+	if (is_smallint(m) && (get_smallint(m) > 0) && (get_smallint(m) <= 9))
+		return true;
+
+	bool is_goal = (is_smallint(m) && (get_smallint(m) == 0))
+		|| (is_interned(m) && (m->val_off == g_caret_s));
+
+	return is_goal && (q->st.m != q->pl->user_m);
+}
+
 static bool expand_meta_predicate(query *q, predicate *pr)
 {
 	uint32_t arity = get_arity(q->st.key);
@@ -2283,7 +2298,7 @@ static bool expand_meta_predicate(query *q, predicate *pr)
 			make_instr(tmp, g_colon_s, bif_iso_qualify_2, 2, 1+k->num_cells);
 			SET_OP(tmp, OP_XFY); tmp++;
 			make_atom(tmp++, new_atom(q->pl, q->st.m->name));
-		} else if (is_smallint(m) && is_positive(m) && (get_smallint(m) <= 9)) {
+		} else if (meta_arg_wants_module(q, m)) {
 			make_instr(tmp, g_colon_s, bif_iso_qualify_2, 2, 1+k->num_cells);
 			SET_OP(tmp, OP_XFY); tmp++;
 			make_atom(tmp++, new_atom(q->pl, q->st.m->name));

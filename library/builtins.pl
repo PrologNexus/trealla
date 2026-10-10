@@ -341,10 +341,12 @@ dump_attvars_(Any) :-
  * the witness and the list of associated templates.
  */
 % bagof(+Term, +Goal, -List)
-bagof(T, G, L) :-
+bagof(T, G0, L) :-
 	(var(L) -> true; must_be(L, list_or_partial_list, bagof/3, _)),
-	acyclic_term(G),
-	'$free_variable_set'(T^G, H, W),
+	acyclic_term(G0),
+	% The meta-call hands over M:(V^G): free variables come from V^G, the rest is called in M.
+	(	nonvar(G0), G0 = M:G, atom(M) -> H = M:H0 ; G = G0, H = H0 ),
+	'$free_variable_set'(T^G, H0, W),
 	(	W == []
 	->	findall(T, H, L),
 		L \== []
@@ -365,10 +367,12 @@ bagof(T, G, L) :-
  * the witness and the set of associated templates.
  */
 % setof(+Term, +Goal, -List)
-setof(T, G, L) :-
+setof(T, G0, L) :-
 	(var(L) -> true; must_be(L, list_or_partial_list, setof/3, _)),
-	acyclic_term(G),
-	'$free_variable_set'(T^G, H, W),
+	acyclic_term(G0),
+	% The meta-call hands over M:(V^G): free variables come from V^G, the rest is called in M.
+	(	nonvar(G0), G0 = M:G, atom(M) -> H = M:H0 ; G = G0, H = H0 ),
+	'$free_variable_set'(T^G, H0, W),
 	(	W == []
 	->	findall(T, H, L0),
 		L0 \== [],
