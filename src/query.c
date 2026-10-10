@@ -625,13 +625,26 @@ bool undo_on_backtrack(query *q, void *v, enum undo_item type)
 	if (!u) return false;
 	u->c = v;
 
-	if (type == UNDO_BBOARD)
-		u->is_bboard = true;
-	else if (type == UNDO_RULE)
+	if (type == UNDO_RULE)
 		u ->is_rule = true;
 	else
 		u->is_cells = true;
 
+	return true;
+}
+
+// A bb_b_put/2 entry to take back off m's blackboard. The key is the
+// undo's own copy: a bb_put/2 meanwhile frees the one the entry holds.
+
+bool undo_bb_on_backtrack(query *q, module *m, const char *key)
+{
+	char *k = TPL_strdup(key);
+	if (!k) return false;
+	undo_item *u = push_undo_item(q);
+	if (!u) { TPL_free(k); return false; }
+	u->m = m;
+	u->key = k;
+	u->is_bboard = true;
 	return true;
 }
 
@@ -1732,9 +1745,12 @@ static void undo_list_drain(list *l)
 	undo_item *u;
 
 	while ((u = list_pop_back(l)) != NULL) {
-		if (u->is_bboard)
+		if (u->is_bboard) {
+			prolog_lock(u->m->pl);
 			sl_del(u->m->keyval, u->key);
-		else if (u->is_mmap)
+			prolog_unlock(u->m->pl);
+			TPL_free(u->key);
+		} else if (u->is_mmap)
 			stream_unmap(u->addr, u->mmap_len);
 		else if (u->is_rule) {
 			clear_clause(&u->r->cl);

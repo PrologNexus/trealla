@@ -325,8 +325,8 @@ static bool bif_bb_b_put_2(query *q)
 
 	val->flags |= FLAG_LIVE;
 	char *key = TPL_strdup(tmpbuf);
-	CHECKED(key);
-	CHECKED(undo_on_backtrack(q, key, UNDO_BBOARD));
+	CHECKED(key, unshare_cells(val, num_cells); TPL_free(val));
+	CHECKED(undo_bb_on_backtrack(q, m, key), TPL_free(key); unshare_cells(val, num_cells); TPL_free(val));
 
 	prolog_lock(q->pl);
 	sl_set(m->keyval, key, val);

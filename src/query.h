@@ -91,8 +91,9 @@ bool make_slice(query *q, cell *d, const cell *orig, size_t off, size_t n);
 bool match_head(query *q);
 bool check_frame(query *q, unsigned max_vars);
 
-enum undo_item {UNDO_BBOARD, UNDO_CELLS, UNDO_RULE};
+enum undo_item {UNDO_CELLS, UNDO_RULE};
 bool undo_on_backtrack(query *q, void *v, enum undo_item type);
+bool undo_bb_on_backtrack(query *q, module *m, const char *key);
 bool undo_mmap_on_backtrack(query *q, void *addr, size_t len);
 void stream_unmap(void *addr, size_t len);
 bool unslice_cells(cell *c, pl_idx num_cells);
