@@ -2716,34 +2716,52 @@ static bool find_key(query *q, predicate *pr, cell *key, pl_ctx key_ctx)
 	return true;
 }
 
+// The predicate clause/retract act on. An explicit module, from M:Head,
+// is looked up every time: M may be bound at run time, so the head cell's
+// cached match could belong to another module.
+
+static predicate *find_db_predicate(query *q, module *m, cell *c)
+{
+	predicate *pr = NULL;
+
+	if (m) {
+		if (is_cstring(c))
+			convert_to_literal(m, c);
+
+		return search_predicate(m, c);
+	}
+
+	if (is_interned(c))
+		pr = c->match;
+	else if (is_cstring(c))
+		convert_to_literal(q->st.m, c);
+
+	if (pr && pr->is_abolished)
+		pr = search_predicate(q->st.m, c);
+
+	if (!pr || is_evaluable(c) || is_builtin(c)) {
+		pr = search_predicate(q->st.m, c);
+
+		if (pr)
+			c->match = pr;
+	}
+
+	return pr;
+}
+
 // Match HEAD :- BODY.
 
-bool match_rule(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
+bool match_rule(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 {
 	if (!q->retry) {
 		cell *c = deref(q, get_head(p1), p1_ctx);
 		pl_ctx c_ctx = q->latest_ctx;
-		predicate *pr = NULL;
-
-		if (is_interned(c))
-			pr = c->match;
-		else if (is_cstring(c))
-			convert_to_literal(q->st.m, c);
-
-		if (pr && pr->is_abolished)
-			pr = search_predicate(q->st.m, c);
-
-		if (!pr || is_evaluable(c) || is_builtin(c)) {
-			pr = search_predicate(q->st.m, c);
-
-			if (pr)
-				c->match = pr;
-		}
+		predicate *pr = find_db_predicate(q, m, c);
 
 		if (!pr) {
 			bool found = false;
 
-			if (get_builtin_term(q->st.m, c, &found, NULL), found)
+			if (get_builtin_term(m ? m : q->st.m, c, &found, NULL), found)
 				return throw_error(q, c, c_ctx, "permission_error", "modify,static_procedure");
 
 			q->st.dbe = NULL;
@@ -2833,32 +2851,17 @@ bool match_rule(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 // Match HEAD.
 // Match HEAD :- true.
 
-bool match_clause(query *q, cell *p1, pl_ctx p1_ctx, cell **ret_body, enum clause_type is_retract)
+bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body, enum clause_type is_retract)
 {
 	if (!q->retry) {
 		cell *c = p1;
 		pl_ctx c_ctx = p1_ctx;
-		predicate *pr = NULL;
-
-		if (is_interned(c))
-			pr = c->match;
-		else if (is_cstring(c))
-			convert_to_literal(q->st.m, c);
-
-		if (pr && pr->is_abolished)
-			pr = search_predicate(q->st.m, c);
-
-		if (!pr || is_evaluable(c) || is_builtin(c)) {
-			pr = search_predicate(q->st.m, c);
-
-			if (pr)
-				c->match = pr;
-		}
+		predicate *pr = find_db_predicate(q, m, c);
 
 		if (!pr) {
 			bool found = false;
 
-			if (get_builtin_term(q->st.m, p1, &found, NULL), found) {
+			if (get_builtin_term(m ? m : q->st.m, p1, &found, NULL), found) {
 				if (is_retract != DO_CLAUSE)
 					return throw_error(q, p1, p1_ctx, "permission_error", "modify,static_procedure");
 				else

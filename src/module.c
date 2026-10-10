@@ -773,7 +773,7 @@ rule *find_in_db(module *m, uint64_t ref)
 
 	for (module *tmp_m = list_front(&m->pl->modules);
 		tmp_m; tmp_m = list_next(tmp_m)) {
-		for (predicate *pr = list_front(&m->predicates);
+		for (predicate *pr = list_front(&tmp_m->predicates);
 			pr; pr = list_next(pr)) {
 			if (!pr->is_dynamic)
 				continue;

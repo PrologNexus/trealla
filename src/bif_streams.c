@@ -583,7 +583,7 @@ static bool del_stream_properties(query *q, int n)
 	set_arity(tmp, 2);
 	q->retry = QUERY_OK;
 
-	while (do_retract(q, tmp, q->st.cur_ctx, DO_RETRACTALL)) {
+	while (do_retract(q, NULL, tmp, q->st.cur_ctx, DO_RETRACTALL)) {
 		if (q->did_throw) return false;
 		q->retry = QUERY_RETRY;
 		retry_choice(q);
@@ -836,7 +836,7 @@ static bool bif_iso_stream_property_2(query *q)
 	CHECKED(tmp);
 	tmp->val_off = g_sys_stream_property_s;
 
-	if (match_clause(q, tmp, q->st.cur_ctx, NULL, DO_CLAUSE) != true) {
+	if (match_clause(q, NULL, tmp, q->st.cur_ctx, NULL, DO_CLAUSE) != true) {
 		clear_streams_properties(q);
 
 		if (is_callable(p1) && !strstr(s_properties, C_STR(q, p1)))

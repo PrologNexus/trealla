@@ -25,7 +25,7 @@ bool push_fail_on_retry_with_barrier(query *q);
 bool push_reset_handler(query *q);
 bool push_catcher(query *q, enum q_retry type);
 
-bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
+bool do_retract(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
 bool do_read_term(query *q, stream *str, cell *p1, pl_ctx p1_ctx, cell *p2, pl_ctx p2_ctx, char *src);
 query *query_create_task_rebased(query *q, cell *instr, unsigned num_vars);
 
@@ -74,8 +74,8 @@ void undo_me(query *q);
 int retry_choice(query *q);
 void assign_vars(parser *p, unsigned start, bool rebase);
 bool start(query *q);
-bool match_rule(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
-bool match_clause(query *q, cell *p1, pl_ctx p1_ctx, cell **body, enum clause_type retract);
+bool match_rule(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
+bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **body, enum clause_type retract);
 void call_attrs(query *q, cell *attrs);
 bool check_redo(query *q);
 const char *cycle_slot_name(query *q, unsigned n, char tmpbuf[256]);

@@ -7,19 +7,36 @@
 #include "module.h"
 #include "query.h"
 
-static bool module_context(query *q, cell **p1, pl_ctx p1_ctx)
+// Strip M: from *p1, setting *mp to M, or to NULL when unqualified. False
+// means stop and return *status: a throw that found a catcher returns true.
+// A module that doesn't exist has no clauses, so as in SWI and Scryer the
+// call just gives if_missing.
+
+static bool module_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, bool *status, bool if_missing)
 {
+	*mp = NULL;
+
 	if (!is_var(*p1)) {
-		if ((*p1)->val_off == g_colon_s) {
-			*p1 = *p1 + 1;
-			cell *cm = deref(q, *p1, p1_ctx);
+		if (((*p1)->val_off == g_colon_s) && (get_arity(*p1) == 2)) {
+			cell *cm = deref(q, *p1 + 1, *p1_ctx);
+
+			if (is_var(cm)) {
+				*status = throw_error(q, cm, q->latest_ctx, "instantiation_error", "module");
+				return false;
+			}
+
 			module *m = find_module(q->pl, C_STR(q, cm));
 
 			if (!m) {
-				return throw_error(q, cm, p1_ctx, "existence_error", "module");
+				*status = if_missing;
+				return false;
 			}
 
-			*p1 += (*p1)->num_cells;
+			cell *h = *p1 + 1;
+			h += h->num_cells;
+			*p1 = deref(q, h, *p1_ctx);
+			*p1_ctx = q->latest_ctx;
+			*mp = m;
 		}
 	}
 
@@ -60,8 +77,11 @@ static bool bif_clause_3(query *q)
 	GET_NEXT_ARG(p2,callable_or_var);
 	GET_NEXT_ARG(p3,atom_or_var);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
+
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, false))
+		return status;
 
 	if (is_var(p1) && is_var(p2) && is_var(p3))
 		return throw_error(q, p3, p3_ctx, "instantiation_error", "args_not_sufficiently_instantiated");
@@ -72,7 +92,7 @@ static bool bif_clause_3(query *q)
 		clause *cl;
 
 		if (!is_var(p3)) {
-			rule *r = find_in_db(q->st.m, clause_ref_from_buf(C_STR(q, p3)));
+			rule *r = find_in_db(m ? m : q->st.m, clause_ref_from_buf(C_STR(q, p3)));
 
 			if (!r)
 				break;
@@ -88,7 +108,7 @@ static bool bif_clause_3(query *q)
 				break;
 			}
 		} else {
-			if (match_clause(q, p1, p1_ctx, NULL, DO_CLAUSE) != true)
+			if (match_clause(q, m, p1, p1_ctx, NULL, DO_CLAUSE) != true)
 				break;
 
 			char tmpbuf[128];
@@ -144,12 +164,15 @@ static bool bif_iso_clause_2(query *q)
 	GET_FIRST_ARG(p1,callable);
 	GET_NEXT_ARG(p2,callable_or_var);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
+
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, false))
+		return status;
 
 	cell *body;
 
-	while (match_clause(q, p1, p1_ctx, &body, DO_CLAUSE)) {
+	while (match_clause(q, m, p1, p1_ctx, &body, DO_CLAUSE)) {
 		if (q->did_throw) return true;
 		bool ok;
 
@@ -208,7 +231,7 @@ static void predicate_purge_dirty_list(predicate *pr)
 #endif
 }
 
-bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
+bool do_retract(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 {
 	if (!q->retry) {
 		cell *head = deref(q, get_head(p1), p1_ctx);
@@ -223,10 +246,10 @@ bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 	bool match;
 
 	if (is_a_rule(p1) && get_logical_body(p1)) {
-		match = match_rule(q, p1, p1_ctx, is_retract);
+		match = match_rule(q, m, p1, p1_ctx, is_retract);
 	} else {
 		cell *head = get_head(p1);
-		match = match_clause(q, head, p1_ctx, NULL, is_retract);
+		match = match_clause(q, m, head, p1_ctx, NULL, is_retract);
 	}
 
 	if (!match || q->did_throw)
@@ -242,16 +265,69 @@ bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 	return true;
 }
 
+// For retract((M:H :- B)): rebuild it as (H :- B), setting *mp to M.
+
+static bool rule_head_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, bool *status)
+{
+	if (*mp || ((*p1)->val_off != g_neck_s) || (get_arity(*p1) != 2))
+		return true;
+
+	cell *h = deref(q, *p1 + 1, *p1_ctx);
+	pl_ctx h_ctx = q->latest_ctx;
+
+	if ((h->val_off != g_colon_s) || (get_arity(h) != 2))
+		return true;
+
+	cell *cm = deref(q, h + 1, h_ctx);
+
+	if (is_var(cm)) {
+		*status = throw_error(q, cm, q->latest_ctx, "instantiation_error", "module");
+		return false;
+	}
+
+	if (!(*mp = find_module(q->pl, C_STR(q, cm)))) {
+		*status = false;
+		return false;
+	}
+
+	cell *hh = h + 1;
+	hh += hh->num_cells;
+	hh = deref(q, hh, h_ctx);
+	pl_ctx hh_ctx = q->latest_ctx;
+	cell *b = *p1 + 1;
+	b += b->num_cells;
+	pl_idx n = 1 + hh->num_cells + b->num_cells;
+	cell *tmp = alloc_heap(q, n);
+
+	if (!tmp) {
+		*status = throw_error(q, *p1, *p1_ctx, "resource_error", "memory");
+		return false;
+	}
+
+	make_instr(tmp, g_neck_s, NULL, 2, n-1);
+	SET_OP(tmp, OP_XFX);
+	dup_cells_by_ref(tmp+1, hh, hh_ctx, hh->num_cells);
+	dup_cells_by_ref(tmp+1+hh->num_cells, b, *p1_ctx, b->num_cells);
+	*p1 = tmp;
+	*p1_ctx = q->st.cur_ctx;
+	return true;
+}
+
 static bool bif_iso_retract_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
 
-	prolog_lock_mod(q->pl, q->st.m);
-	bool ok = do_retract(q, p1, p1_ctx, DO_RETRACT);
-	prolog_unlock_mod(q->pl, q->st.m);
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, false)
+		|| !rule_head_context(q, &p1, &p1_ctx, &m, &status))
+		return status;
+
+	module *lm = m ? m : q->st.m;
+	prolog_lock_mod(q->pl, lm);
+	bool ok = do_retract(q, m, p1, p1_ctx, DO_RETRACT);
+	prolog_unlock_mod(q->pl, lm);
 	return ok;
 }
 
@@ -259,16 +335,20 @@ static bool bif_iso_retractall_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
 
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, true))
+		return status;
+
+	module *lm = m ? m : q->st.m;
 	cell *head = deref(q, get_head(p1), p1_ctx);
-	predicate *pr = search_predicate(q->st.m, head);
+	predicate *pr = search_predicate(lm, head);
 
 	if (!pr) {
 		bool found = false;
 
-		if (get_builtin_term(q->st.m, head, &found, NULL), found)
+		if (get_builtin_term(lm, head, &found, NULL), found)
 			return throw_error(q, head, q->latest_ctx, "permission_error", "modify,static_procedure");
 
 		return true;
@@ -277,11 +357,11 @@ static bool bif_iso_retractall_1(query *q)
 	if (!pr->cnt)
 		return true;
 
-	prolog_lock_mod(q->pl, q->st.m);
+	prolog_lock_mod(q->pl, lm);
 
-	while (do_retract(q, p1, p1_ctx, DO_RETRACTALL)) {
+	while (do_retract(q, m, p1, p1_ctx, DO_RETRACTALL)) {
 		if (q->did_throw) {
-			prolog_unlock_mod(q->pl, q->st.m);
+			prolog_unlock_mod(q->pl, lm);
 			return true;
 		}
 
@@ -291,7 +371,7 @@ static bool bif_iso_retractall_1(query *q)
 	}
 
 	pr->is_processed = false;
-	prolog_unlock_mod(q->pl, q->st.m);
+	prolog_unlock_mod(q->pl, lm);
 	return true;
 }
 
