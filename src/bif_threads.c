@@ -404,6 +404,7 @@ static int new_thread(prolog *pl)
 	t->id = pthread_self();
 #endif
 	t->is_detached = false;
+	t->is_joining = false;
 	t->is_queue_only = false;
 	t->is_mutex_only = false;
 	t->is_finished = false;
@@ -1344,6 +1345,19 @@ static bool bif_thread_join_2(query *q)
 	if (q->is_task && !t->is_finished)
 		return do_yield(q, MSG_TASK_POLL_MS);
 
+	// Claim the join under the guard, so the thread can't detach itself
+	// (say from its at_exit goal) while this waits: pthread_join() on a
+	// detached thread is undefined, and here it never returned.
+
+	acquire_lock(&t->guard);
+
+	if (t->is_detached) {
+		release_lock(&t->guard);
+		return throw_error(q, p1, p1_ctx, "domain_error", "not_joinable");
+	}
+
+	t->is_joining = true;
+	release_lock(&t->guard);
 	void *retval;
 
 	if (pthread_join((pthread_t)t->id, &retval)) {
@@ -1613,10 +1627,21 @@ static bool bif_thread_detach_1(query *q)
 	if (!is_threaded(t))
 		return throw_error(q, p1, p1_ctx, "permission_error", "detach,not_thread");
 
+	// As in SWI, a thread another is already joining can't be detached.
+
+	acquire_lock(&t->guard);
+
+	if (t->is_joining) {
+		release_lock(&t->guard);
+		return throw_error(q, p1, p1_ctx, "permission_error", "detach,thread");
+	}
+
 	if (t->is_active) {
 		t->is_detached = true;
 		pthread_detach(t->id);
 	}
+
+	release_lock(&t->guard);
 
 	THREAD_DEBUG DUMP_TERM(" -  ", q->st.instr, q->st.cur_ctx, 1);
 	return true;
