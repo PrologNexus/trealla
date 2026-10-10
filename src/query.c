@@ -3202,7 +3202,11 @@ bool start(query *q)
 		}
 
 #if USE_THREADS
-		if (q->thread_ptr) {
+		// Not while a retry is pending: retry_choice() below would restore
+		// the choicepoint over the handler, and the signal, already taken
+		// off the queue, was lost. The next pass delivers it.
+
+		if (q->thread_ptr && !q->retry) {
 			thread *t = q->thread_ptr;
 
 			if (list_count(&t->signals)) {
