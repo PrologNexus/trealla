@@ -2082,9 +2082,12 @@ ISO standards proposal but is commonly supported.
 
 Where 'opts' can be *alias(+atom)*, *at_exit(:term)* and/or *detached(+boolean)*
 (the default is *NOT* detached, ie. joinable).
-Note: `thread_cancel/1` is dangerous and should be avoided, it does
-not exist in some other Prologs and does not rightly belong in any standards
-proposal.
+Note: `thread_cancel/1` does not exist in some other Prologs and does not
+rightly belong in any standards proposal. It asks the thread to stop, as
+if it had been signalled with `thread_exit(cancelled)`: the thread stops
+at its next goal even if busy or blocked, can't catch it, and runs its
+`at_exit` goal. It is also detached, so it goes away without a join,
+unless one is already waiting, which then gets `exited(cancelled)`.
 
 These are non-standard but *SWI-Prolog* compatible:
 

@@ -1034,10 +1034,27 @@ static void do_unlock_all(thread *me)
 	}
 }
 
+// A goal ended by thread_exit/1 can leave choicepoints, such as a catch/3
+// still open, pointing into the goal that is about to be freed. The at_exit
+// goal runs on the same query and backtracked into them.
+
+static void drop_leftover_choices(query *q)
+{
+	while (q->st.cp) {
+		choice *ch = GET_CURR_CHOICE();
+
+		if (ch->owns_pr)
+			leave_predicate(q, ch->st.pr, ch->st.pr_dbgen, false);
+
+		drop_choice(q);
+	}
+}
+
 static void *start_routine_thread_create(thread *t)
 {
 	t->id = pthread_self();
 	execute(t->q, t->goal, t->num_vars);
+	drop_leftover_choices(t->q);
 	unshare_cells(t->goal, t->goal->num_cells);
 	TPL_free(t->goal);
 	t->goal = NULL;
@@ -1528,18 +1545,6 @@ static void retire_cancelled_thread(thread *t)
 	retire_thread(t->pl, t);
 }
 
-static void do_cancel(thread *t)
-{
-	pthread_t id = t->id;
-	retire_cancelled_thread(t);
-
-#if defined(__ANDROID__)
-	pthread_kill(id, 0);
-#else
-	pthread_cancel(id);
-#endif
-}
-
 // pthread_join() has no timed variant, so it runs on a throwaway helper
 // thread and we poll a flag instead, bounded by deadline.
 
@@ -1587,6 +1592,8 @@ static bool cancel_and_join(pthread_t id, uint64_t deadline)
 #endif
 }
 
+static bool bif_thread_exit_1(query *q);
+
 static bool bif_thread_cancel_1(query *q)
 {
 	THREAD_DEBUG DUMP_TERM("*** ", q->st.instr, q->st.cur_ctx, 1);
@@ -1606,7 +1613,26 @@ static bool bif_thread_cancel_1(query *q)
 	if (!is_threaded(t))
 		return throw_error(q, p1, p1_ctx, "permission_error", "cancel,not_thread");
 
-	do_cancel(t);
+	// Cancel by asking, not by force. Freeing the thread's query and then
+	// calling pthread_cancel() crashed: a thread computing reaches no
+	// cancellation point, so it ran on over the freed query. A signal
+	// reaches it busy or blocked, thread_exit/1 can't be caught, and the
+	// thread unwinds itself, running its at_exit goal. Detached, unless a
+	// join is already waiting, so it still goes away without one.
+
+	acquire_lock(&t->guard);
+
+	if (!t->is_joining && !t->is_detached && t->is_active) {
+		t->is_detached = true;
+		pthread_detach(t->id);
+	}
+
+	release_lock(&t->guard);
+	cell goal[2];
+	make_instr(goal, new_atom(q->pl, "thread_exit"), bif_thread_exit_1, 1, 1);
+	make_atom(goal+1, new_atom(q->pl, "cancelled"));
+	CHECKED(queue_to_chan(t, goal, q->my_chan, true));
+	resume_thread(t);
 	THREAD_DEBUG DUMP_TERM(" -  ", q->st.instr, q->st.cur_ctx, 1);
 	return true;
 }
@@ -2678,8 +2704,8 @@ void thread_cancel_all(prolog *pl)
 	// server's accept loop) after a pass has gone by it, and
 	// threads_destroy() frees every struct unconditionally once this
 	// returns. Joinable threads are cancelled and joined here (unlike
-	// do_cancel(), used by the live thread_cancel/1 builtin, which
-	// doesn't need to wait since nothing else frees that struct).
+	// thread_cancel/1, which asks the thread to exit by signal and
+	// leaves it to retire itself).
 	// Detached threads can't be joined, so they just get a bounded wait
 	// to self-retire.
 
