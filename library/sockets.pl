@@ -79,11 +79,10 @@ socket_client_open(Addr, Stream, Options) :-
 		throw(error(instantiation_error, socket_client_open/3))
 	; true
 	),
-	Addr = Address:Port,
+	Addr = Address:Port, !,
 	must_be(var, Stream),
 	must_be(list, Options),
-	atom(Address),
-	(( atom(Port) ; integer(Port) ) ->
+	(	atom(Address), ( atom(Port) ; integer(Port) ) ->
 		true
 	; throw(error(type_error(socket_address, Addr), socket_client_open/3))
 	),
@@ -150,7 +149,7 @@ socket_server_open(Addr0, ServerSocket, Options) :-
 	atom(Address),
 	( atom(Port) ; integer(Port) ; var(Port) ) ->
 		true
-	; throw(error(type_error(socket_address, Addr), socket_client_open/3))
+	; throw(error(type_error(socket_address, Addr), socket_server_open/3))
 	),
 	'$server'(Addr, ServerSocket, Options),
 	'$sock_opts'(ServerSocket, Options).
@@ -162,7 +161,7 @@ socket_server_open(Addr, ServerSocket, Options) :-
 	atom(Address),
 	(( atom(Port) ; integer(Port) ; var(Port) ) ->
 		true
-	; throw(error(type_error(socket_address, Addr), socket_client_open/3))
+	; throw(error(type_error(socket_address, Addr), socket_server_open/3))
 	),
 	'$server'(Addr, ServerSocket, Options),
 	'$sock_opts'(ServerSocket, Options).
