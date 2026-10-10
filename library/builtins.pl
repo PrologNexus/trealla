@@ -88,6 +88,21 @@ bb_get(K, T) :-
 bb_delete(K, T) :-
 	'$bb_delete'(K, '$bb'(T)).
 
+% flag/3 as SWI has it. New is an atom or is evaluated; '$flag_cas' only
+% sets it if no other thread got in first, else this retries from a fresh read.
+
+:- help(flag(+term,?term,+term), [iso(false)]).
+
+flag(Key, Old, New) :-
+	repeat,
+	'$flag_get'(Key, V0),
+	(	Old = V0 ->
+		(atom(New) -> V = New ; V is New),
+		'$flag_cas'(Key, V0, V),
+		!
+	;	!, fail
+	).
+
 bb_update(K, O, N) :-
 	'$bb_get'(K, '$bb'(O)),
 	bb_put(K, N).

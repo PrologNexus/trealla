@@ -4808,6 +4808,116 @@ static bool bif_sys_skip_max_list_4(query *q)
 	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
 }
 
+// flag/3 keys as SWI has them: an atom, an integer, or a compound by name/arity.
+
+static bool flag_key(query *q, cell *c, pl_ctx c_ctx, char *buf, size_t len)
+{
+	if (is_var(c))
+		return throw_error(q, c, c_ctx, "instantiation_error", "key");
+
+	if (is_atom(c))
+		snprintf(buf, len, "a%s", C_STR(q, c));
+	else if (is_smallint(c))
+		snprintf(buf, len, "i%"PRId64"", (int64_t)get_smallint(c));
+	else if (is_compound(c))
+		snprintf(buf, len, "c%s/%u", C_STR(q, c), (unsigned)get_arity(c));
+	else
+		return throw_error(q, c, c_ctx, "type_error", "key");
+
+	return true;
+}
+
+static bool flag_value_eq(const cell *a, const cell *b)
+{
+	if (is_float(a) && is_float(b))
+		return a->val_float == b->val_float;
+
+	if (is_smallint(a) && is_smallint(b))
+		return get_smallint(a) == get_smallint(b);
+
+	return is_atom(a) && is_atom(b) && (a->val_off == b->val_off);
+}
+
+// '$flag_get'(+Key, -Value): 0 for a flag never set.
+
+static bool bif_sys_flag_get_2(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	char key[1024];
+
+	if (!flag_key(q, p1, p1_ctx, key, sizeof(key)))
+		return false;
+
+	cell tmp, *val;
+	make_int(&tmp, 0);
+	prolog_lock(q->pl);
+
+	if (sl_get(q->pl->flagtab, key, (void*)&val))
+		tmp = *val;
+
+	prolog_unlock(q->pl);
+	return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$flag_cas'(+Key, +Old, +New): set New only if the value is still Old,
+// so flag/3 can evaluate outside any lock and retry when it lost a race.
+
+static bool bif_sys_flag_cas_3(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,any);
+	char key[1024];
+
+	if (!flag_key(q, p1, p1_ctx, key, sizeof(key)))
+		return false;
+
+	cell v;
+
+	if (is_atom(p3))
+		make_atom(&v, new_atom(q->pl, C_STR(q, p3)));
+	else if (is_smallint(p3))
+		make_int(&v, get_smallint(p3));
+	else if (is_float(p3))
+		make_float(&v, p3->val_float);
+	else if (is_number(p3))
+		return throw_error(q, p3, p3_ctx, "representation_error", "int64_t");
+	else
+		return throw_error(q, p3, p3_ctx, "type_error", "flag_value");
+
+	cell zero, *cur = &zero;
+	make_int(&zero, 0);
+	prolog_lock(q->pl);
+	sl_get(q->pl->flagtab, key, (void*)&cur);
+
+	if (!flag_value_eq(cur, p2)) {
+		prolog_unlock(q->pl);
+		return false;
+	}
+
+	if (cur != &zero) {
+		*cur = v;
+		prolog_unlock(q->pl);
+		return true;
+	}
+
+	char *k = TPL_strdup(key);
+	cell *val = TPL_malloc(sizeof(cell));
+
+	if (!k || !val) {
+		prolog_unlock(q->pl);
+		TPL_free(k);
+		TPL_free(val);
+		return throw_error(q, p1, p1_ctx, "resource_error", "memory");
+	}
+
+	*val = v;
+	sl_set(q->pl->flagtab, k, val);
+	prolog_unlock(q->pl);
+	return true;
+}
+
 // Bytes from the OS random source; never a seeded PRNG, so fail rather than fall back.
 
 static bool os_random_bytes(unsigned char *buf, size_t len)
@@ -7408,6 +7518,8 @@ builtins g_other_bifs[] =
 	{"string_concat", 3, bif_string_concat_3, "+string,+string,?string", false, false, BLAH},
 	{"string_length", 2, bif_string_length_2, "+string,?integer", false, false, BLAH},
 	{"crypto_n_random_bytes", 2, bif_crypto_n_random_bytes_2, "+integer,-codes", false, false, BLAH},
+	{"$flag_get", 2, bif_sys_flag_get_2, "+term,-number", false, false, BLAH},
+	{"$flag_cas", 3, bif_sys_flag_cas_3, "+term,+number,+number", false, false, BLAH},
 	{"cyclic_term", 1, bif_cyclic_term_1, "+term", false, false, BLAH},
 	{"load_text", 2, bif_load_text_2, "+string,+list", false, false, BLAH},
 	{"between", 3, bif_between_3, "+integer,+integer,?integer", false, false, BLAH},
