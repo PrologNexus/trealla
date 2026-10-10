@@ -339,23 +339,40 @@ int tpl_accept(stream *str, char **addr, int *port)
 {
 #if !defined(_WIN32) && !defined(__wasi__)
 	NET_CHECK_METAL();
-	struct sockaddr_in sa = {0};
-	socklen_t len = sizeof(sa);
-	int fd = accept(fileno(str->fp_in), (struct sockaddr*)&sa, &len);
+	struct sockaddr_storage ss = {0};
+	socklen_t len = sizeof(ss);
+	int fd = accept(fileno(str->fp_in), (struct sockaddr*)&ss, &len);
 
 	// FIX 9: any accept() failure leaves fd == -1; bail before touching it so
 	// setsockopt() is never called on an invalid descriptor.
 	if (fd == -1)
 		return -1;
 
-	if (addr) {
-		char buf[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf));
-		*addr = TPL_strdup(buf);
+	// A dual-stack listener is IPv6: give its IPv4 peers, which arrive as
+	// ::ffff:a.b.c.d, in their plain IPv4 form.
+
+	char buf[INET6_ADDRSTRLEN] = "";
+	unsigned peer_port = 0;
+
+	if (ss.ss_family == AF_INET6) {
+		const struct sockaddr_in6 *sa6 = (const struct sockaddr_in6*)&ss;
+		peer_port = ntohs(sa6->sin6_port);
+
+		if (IN6_IS_ADDR_V4MAPPED(&sa6->sin6_addr))
+			inet_ntop(AF_INET, &sa6->sin6_addr.s6_addr[12], buf, sizeof(buf));
+		else
+			inet_ntop(AF_INET6, &sa6->sin6_addr, buf, sizeof(buf));
+	} else if (ss.ss_family == AF_INET) {
+		const struct sockaddr_in *sa = (const struct sockaddr_in*)&ss;
+		peer_port = ntohs(sa->sin_port);
+		inet_ntop(AF_INET, &sa->sin_addr, buf, sizeof(buf));
 	}
 
+	if (addr)
+		*addr = TPL_strdup(buf);
+
 	if (port)
-		*port = ntohs(sa.sin_port);
+		*port = peer_port;
 
 	struct linger l;
 	l.l_onoff = 0;
