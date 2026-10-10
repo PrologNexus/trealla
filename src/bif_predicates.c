@@ -1,9 +1,17 @@
+#if defined(_WIN32)
+#define _CRT_RAND_S				// declares rand_s() in stdlib.h
+#endif
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+#include <sys/random.h>
+#endif
 
 #include "base64.h"
 #include "module.h"
@@ -4800,17 +4808,39 @@ static bool bif_sys_skip_max_list_4(query *q)
 	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
 }
 
-// FIXME: not truly crypto strength
+// Bytes from the OS random source; never a seeded PRNG, so fail rather than fall back.
+
+static bool os_random_bytes(unsigned char *buf, size_t len)
+{
+#if defined(_WIN32)
+	while (len) {
+		unsigned r;
+
+		if (rand_s(&r))
+			return false;
+
+		for (unsigned i = 0; (i < sizeof(r)) && len; i++, len--, r >>= 8)
+			*buf++ = r & 0xFF;
+	}
+#elif defined(__ANDROID__)
+	arc4random_buf(buf, len);			// bionic has getentropy only from API 28
+#else
+	while (len) {
+		size_t n = len < 256 ? len : 256;		// getentropy's per-call limit
+
+		if (getentropy(buf, n))
+			return false;
+
+		buf += n;
+		len -= n;
+	}
+#endif
+
+	return true;
+}
 
 static bool bif_crypto_n_random_bytes_2(query *q)
 {
-	static bool s_seed = false;
-
-	if (!s_seed) {
-		srand(time(NULL));
-		s_seed = true;
-	}
-
 	GET_FIRST_ARG(p1,integer);
 	GET_NEXT_ARG(p2,list_or_var);
 	int n = get_smallint(p1);
@@ -4818,14 +4848,23 @@ static bool bif_crypto_n_random_bytes_2(query *q)
 	if (n < 1)
 		return throw_error(q, p1, p1_ctx, "domain_error", "not_less_than_zero");
 
-	CHECKED(init_tmp_heap(q));
+	unsigned char *bytes = TPL_malloc(n);
+	CHECKED(bytes);
 
-	while (n--) {
-		int i = rand() % 256;
+	if (!os_random_bytes(bytes, n)) {
+		TPL_free(bytes);
+		return throw_error(q, p1, p1_ctx, "system_error", "random_source");
+	}
+
+	CHECKED(init_tmp_heap(q), TPL_free(bytes));
+
+	for (int i = 0; i < n; i++) {
 		cell tmp;
-		make_int(&tmp, i);
+		make_int(&tmp, bytes[i]);
 		append_list(q, &tmp);
 	}
+
+	TPL_free(bytes);
 
 	cell *l = end_list(q);
 	CHECKED(l);
