@@ -4951,6 +4951,10 @@ static bool os_random_bytes(unsigned char *buf, size_t len)
 	}
 #elif defined(__ANDROID__)
 	arc4random_buf(buf, len);			// bionic has getentropy only from API 28
+#elif defined(TPL_FREESTANDING) || defined(__riscos__)
+	(void) buf;							// no OS random source to ask
+	(void) len;
+	return false;
 #else
 	while (len) {
 		size_t n = len < 256 ? len : 256;		// getentropy's per-call limit
