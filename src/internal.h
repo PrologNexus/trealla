@@ -688,8 +688,11 @@ typedef struct {
 	};
 
 	size_t mmap_len;
+	void *tptr;
+	uint64_t gvar_id;
 
 	bool is_bboard:1;
+	bool is_gvar:1;							// key, with tptr and gvar_id below
 	bool is_cells:1;
 	bool is_rule:1;
 	bool is_mmap:1;
@@ -906,6 +909,8 @@ struct thread_ {
 	int chan, locked_by;
 	pl_atomic bool is_active;
 	bool is_joining;						// under guard: a join is waiting, so it can't be detached
+	skiplist *gvars;						// b_setval/nb_setval, this thread's own
+	uint64_t gvar_seq;
 	volatile int timedout;   // set by SIGALRM handler s_sigfn(); thread-lived
 	bool is_init:1;
 	bool is_finished:1;

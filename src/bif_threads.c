@@ -340,6 +340,7 @@ void threads_destroy(prolog *pl)
 		next = t->live_next;
 		tasks_destroy(t);
 		sched_destroy(t);
+		gvars_destroy(t);
 		TPL_free(t);
 	}
 
@@ -347,6 +348,7 @@ void threads_destroy(prolog *pl)
 		next = t->free_next;
 		tasks_destroy(t);
 		sched_destroy(t);
+		gvars_destroy(t);
 		TPL_free(t);
 	}
 
@@ -405,6 +407,8 @@ static int new_thread(prolog *pl)
 #endif
 	t->is_detached = false;
 	t->is_joining = false;
+	gvars_destroy(t);					// a recycled struct starts with none
+	t->gvar_seq = 0;
 	t->is_queue_only = false;
 	t->is_mutex_only = false;
 	t->is_finished = false;
@@ -1107,6 +1111,7 @@ static void *start_routine_thread_create(thread *t)
 	TPL_free(t->alias);
 	t->alias = NULL;
 	query_destroy(t->q);
+	gvars_destroy(t);
 	t->q = NULL;
 	msg *m;
 
@@ -1317,6 +1322,7 @@ static bool bif_thread_create_3(query *q)
 		if (t->goal) { unshare_cells(t->goal, t->goal->num_cells); TPL_free(t->goal); t->goal = NULL; }
 		if (t->at_exit_goal) { unshare_cells(t->at_exit_goal, t->at_exit_goal->num_cells); TPL_free(t->at_exit_goal); t->at_exit_goal = NULL; }
 		query_destroy(t->q);
+		gvars_destroy(t);
 		t->q = NULL;
 		retire_thread(q->pl, t);
 		return throw_error(q, p1, p1_ctx, "system_error", "pthread_create");
@@ -1422,6 +1428,7 @@ static bool bif_thread_join_2(query *q)
 	TPL_free(t->alias);
 	t->alias = NULL;
 	query_destroy(t->q);
+	gvars_destroy(t);
 	t->q = NULL;
 	msg *m;
 
@@ -1537,6 +1544,8 @@ static void retire_cancelled_thread(thread *t)
 	}
 
 	query_destroy(t->q);
+
+	gvars_destroy(t);
 	t->q = NULL;
 	//t->id = 0;
 

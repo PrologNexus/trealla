@@ -103,6 +103,18 @@ flag(Key, Old, New) :-
 	;	!, fail
 	).
 
+% SWI's global variables, which are the calling thread's own.
+
+:- help(b_setval(+atom,+term), [iso(false)]).
+:- help(nb_setval(+atom,+term), [iso(false)]).
+:- help(b_getval(+atom,?term), [iso(false)]).
+:- help(nb_getval(+atom,?term), [iso(false)]).
+
+b_setval(K, V) :- '$gvar_put'(K, '$bb'(V), true).
+nb_setval(K, V) :- '$gvar_put'(K, '$bb'(V), false).
+b_getval(K, V) :- '$gvar_get'(K, '$bb'(V)).
+nb_getval(K, V) :- '$gvar_get'(K, '$bb'(V)).
+
 bb_update(K, O, N) :-
 	'$bb_update'(K, '$bb'(O), '$bb'(N)).
 

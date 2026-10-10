@@ -704,6 +704,153 @@ static bool bif_sys_bb_is_live_1(query *q)
 	return live;
 }
 
+// Global variables, SWI's b_setval/2 and nb_setval/2, are per thread, so
+// unlike the blackboard they need no lock. A key holds a stack: nb_setval
+// replaces it with one entry, b_setval pushes one that backtracking pops,
+// but only while it is still on top, which its id tells.
+
+typedef struct {
+	uint64_t id;
+	cell *val;
+} gvar;
+
+static void gvar_free(const void *key, const void *val, const void *p)
+{
+	gvar *g = (gvar*)val;
+	TPL_free((void*)key);
+	unshare_cells(g->val, g->val->num_cells);
+	TPL_free(g->val);
+	TPL_free(g);
+}
+
+void gvars_destroy(void *tp)
+{
+	thread *t = tp;
+	sl_destroy(t->gvars);
+	t->gvars = NULL;
+}
+
+void gvar_undo(void *tp, const char *key, uint64_t id)
+{
+	thread *t = tp;
+	gvar *g;
+
+	if (t->gvars && sl_get(t->gvars, key, (void*)&g) && (g->id == id))
+		sl_del(t->gvars, key);
+}
+
+static bool gvar_key(query *q, cell *p1, pl_ctx p1_ctx)
+{
+	if (is_var(p1))
+		return throw_error(q, p1, p1_ctx, "instantiation_error", "atom");
+
+	if (!is_atom(p1))
+		return throw_error(q, p1, p1_ctx, "type_error", "atom");
+
+	return true;
+}
+
+// '$gvar_put'(+Key, +'$bb'(Value), +Backtrackable)
+
+static bool bif_sys_gvar_put_3(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,atom);
+
+	if (!gvar_key(q, p1, p1_ctx))
+		return false;
+
+	thread *t = get_self_query(q);
+	bool backtrackable = !CMP_STRING_TO_CSTR(q, p3, "true");
+
+	if (!t->gvars)
+		CHECKED(t->gvars = sl_create((void*)fake_strcmp, (void*)gvar_free, NULL));
+
+	cell *val;
+
+	if (backtrackable) {
+		// As bb_b_put/2 stores it: sharing the term's variables, like SWI.
+
+		CHECKED(init_tmp_heap(q));
+		cell *tmp = clone_term_to_tmp(q, p2, p2_ctx);
+		CHECKED(tmp);
+		pl_idx num_cells = tmp->num_cells;
+		CHECKED(val = TPL_malloc(sizeof(cell)*num_cells));
+		dup_cells(val, tmp, num_cells);
+
+		if (!unslice_cells(val, num_cells)) {
+			unshare_cells(val, num_cells);
+			TPL_free(val);
+			return throw_error(q, tmp, q->st.cur_ctx, "resource_error", "memory");
+		}
+
+		val->flags |= FLAG_LIVE;
+	} else
+		CHECKED(val = bb_make_value(q, p2, p2_ctx));
+
+	gvar *g = TPL_malloc(sizeof(gvar));
+	char *key = TPL_strdup(C_STR(q, p1));
+
+	if (!g || !key) {
+		TPL_free(g);
+		TPL_free(key);
+		unshare_cells(val, val->num_cells);
+		TPL_free(val);
+		return throw_error(q, p1, p1_ctx, "resource_error", "memory");
+	}
+
+	g->id = ++t->gvar_seq;
+	g->val = val;
+
+	if (backtrackable) {
+		if (!undo_gvar_on_backtrack(q, t, key, g->id)) {
+			gvar_free(key, g, NULL);
+			return throw_error(q, p1, p1_ctx, "resource_error", "memory");
+		}
+
+		sl_set(t->gvars, key, g);			// on top of what it shadows
+	} else {
+		while (sl_del(t->gvars, key))
+			;
+
+		sl_app(t->gvars, key, g);
+	}
+
+	return true;
+}
+
+// '$gvar_get'(+Key, ?'$bb'(Value))
+
+static bool bif_sys_gvar_get_2(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+
+	if (!gvar_key(q, p1, p1_ctx))
+		return false;
+
+	thread *t = get_self_query(q);
+	gvar *g;
+
+	if (!t->gvars || !sl_get(t->gvars, C_STR(q, p1), (void*)&g))
+		return throw_error(q, p1, p1_ctx, "existence_error", "variable");
+
+	bool live = g->val->flags & FLAG_LIVE;
+	cell *tmp = live ?
+		bb_import_term_to_heap(q, g->val, q->st.cur_ctx) :
+		import_term(q, g->val, q->st.cur_ctx);
+	CHECKED(tmp);
+
+	if (!live && is_compound(tmp) && (get_arity(tmp) == 1)) {
+		tmp = bb_reattach_attv(q, tmp);
+		CHECKED(tmp);
+	}
+
+	GET_FIRST_ARG(p1x,any);
+	GET_NEXT_ARG(p2,any);
+	return unify(q, p2, p2_ctx, tmp, q->st.cur_ctx);
+}
+
 builtins g_bboard_bifs[] =
 {
 	{"$bb_b_put", 2, bif_bb_b_put_2, ":atom,+term", false, false, BLAH},
@@ -711,6 +858,8 @@ builtins g_bboard_bifs[] =
 	{"$bb_get", 2, bif_bb_get_2, ":atom,?term", false, false, BLAH},
 	{"$bb_delete", 2, bif_bb_delete_2, ":atom,?term", false, false, BLAH},
 	{"$bb_update", 3, bif_sys_bb_update_3, ":atom,?term,+term", false, false, BLAH},
+	{"$gvar_put", 3, bif_sys_gvar_put_3, "+atom,+term,+atom", false, false, BLAH},
+	{"$gvar_get", 2, bif_sys_gvar_get_2, "+atom,?term", false, false, BLAH},
 	{"$bb_is_live", 1, bif_sys_bb_is_live_1, ":atom", false, false, BLAH},
 
 	{0}

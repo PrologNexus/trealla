@@ -633,6 +633,21 @@ bool undo_on_backtrack(query *q, void *v, enum undo_item type)
 	return true;
 }
 
+// A b_setval/2 entry to take back off thread t's variables, if still on top.
+
+bool undo_gvar_on_backtrack(query *q, void *t, const char *key, uint64_t id)
+{
+	char *k = TPL_strdup(key);
+	if (!k) return false;
+	undo_item *u = push_undo_item(q);
+	if (!u) { TPL_free(k); return false; }
+	u->tptr = t;
+	u->key = k;
+	u->gvar_id = id;
+	u->is_gvar = true;
+	return true;
+}
+
 // A bb_b_put/2 entry to take back off m's blackboard. The key is the
 // undo's own copy: a bb_put/2 meanwhile frees the one the entry holds.
 
@@ -1745,7 +1760,10 @@ static void undo_list_drain(list *l)
 	undo_item *u;
 
 	while ((u = list_pop_back(l)) != NULL) {
-		if (u->is_bboard) {
+		if (u->is_gvar) {
+			gvar_undo(u->tptr, u->key, u->gvar_id);
+			TPL_free(u->key);
+		} else if (u->is_bboard) {
 			prolog_lock(u->m->pl);
 			sl_del(u->m->keyval, u->key);
 			prolog_unlock(u->m->pl);

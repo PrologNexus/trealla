@@ -1736,9 +1736,6 @@ del_clpb(Var) :-
         del_attr(Var, clpb_hash),
         del_attr(Var, clpb_atom).
 
-b_setval(K, T) :- bb_b_put(K, T).
-nb_setval(K, T) :- bb_put(K, T).
-b_getval(K, T) :- bb_get(K, T).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
    Fuse formulas that share the same variables into single conjunctions.
