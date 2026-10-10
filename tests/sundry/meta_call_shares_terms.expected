@@ -2,4 +2,6 @@ t_call: c(2)
 t_once: c(2)
 t_ignore: c(3)
 t_findall: c(3)
+t_findnsols: [c(2)/[x,x],c(4)/[x,x],c(5)/[x]]
+t_chunks_hide: [unbound/[1],unbound/[2]]
 t_page: [[a,b],[c,d,e],[f,g]]

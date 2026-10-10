@@ -204,12 +204,26 @@ static bool bif_findnsols_4(query *q)
 			return throw_error(q, p3, p3_ctx, "type_error", "list");
 
 		// Rename template and goal together so the goal's bindings don't show between chunks.
+		// A variable bound to a ground compound is shared instead, as SWI does: the copy
+		// keeps an indirect as it is, so nb_setarg/3 on that term reaches the caller's.
 
 		cell *pair = alloc_heap(q, 1+p1->num_cells+p2->num_cells);
 		CHECKED(pair);
 		make_instr(pair, g_minus_s, NULL, 2, p1->num_cells+p2->num_cells);
 		dup_cells_by_ref(pair+1, p1, p1_ctx, p1->num_cells);
 		dup_cells_by_ref(pair+1+p1->num_cells, p2, p2_ctx, p2->num_cells);
+
+		for (cell *c = pair+1, *end = pair+pair->num_cells; c < end; c++) {
+			if (!is_var(c))
+				continue;
+
+			cell *v = deref(q, c, q->st.cur_ctx);
+			pl_ctx v_ctx = q->latest_ctx;
+
+			if (is_compound(v) && !has_vars(q, v, v_ctx))
+				make_indirect(c, v, v_ctx);
+		}
+
 		cell *copy = copy_term_to_heap(q, pair, q->st.cur_ctx, false);
 		CHECKED(copy);
 		p1 = copy + 1;
