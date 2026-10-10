@@ -2386,13 +2386,12 @@ static rule *assert_begin(module *m, unsigned num_vars, cell *p1, bool consultin
 			const char *name = C_STR(m, FIRST_ARG(c));
 			module *tmp_m = find_module(m->pl, name), *save_m = m;
 
-			if (!tmp_m) {
-				if (consulting)
-					fprintf(stderr, "Error: existence error module %s:(%s)/%u\n", name, C_STR(m, c), get_arity(c));
+			// As in SWI, a clause for a module that doesn't exist yet creates it.
 
+			if (!tmp_m && !(tmp_m = module_create(m->pl, name)))
 				return NULL;
-			} else
-				m = tmp_m;
+
+			m = tmp_m;
 
 			cell *head = p1 + 3;
 			pl_idx head_num_cells = head->num_cells;
@@ -2417,13 +2416,10 @@ static rule *assert_begin(module *m, unsigned num_vars, cell *p1, bool consultin
 			const char *name = C_STR(m, FIRST_ARG(c));
 			module *tmp_m = find_module(m->pl, name);
 
-			if (!tmp_m) {
-				if (consulting)
-					fprintf(stderr, "Error: extistence error module %s:(%s)/%u\n", name, C_STR(m, c), get_arity(c));
-
+			if (!tmp_m && !(tmp_m = module_create(m->pl, name)))
 				return NULL;
-			} else
-				m = tmp_m;
+
+			m = tmp_m;
 
 			if (!is_callable(p1+2) || is_iso_list(p1+2)) {
 				if (consulting)
