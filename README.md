@@ -502,7 +502,8 @@ an instantiation error for one.
 *safe_load/2* loads untrusted source into a module, as *SWI-Prolog*'s
 *load_files/2* does with *sandboxed(true)*: the source is *string(Text)*,
 *stream(S)* or *terms(List)*. A clause must be for that module and not a
-system predicate, and has its body guarded. A directive may declare the
+system predicate or an expansion hook (*term_expansion/2*,
+*goal_expansion/2*), and has its body guarded. A directive may declare the
 module's own predicates dynamic, discontiguous, multifile and so on,
 declare an operator, which stays the module's own, set a flag
 *sandbox:safe_prolog_flag/2* allows, load a library by a relative path,
