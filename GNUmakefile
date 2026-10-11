@@ -446,6 +446,7 @@ LIBOBJECTS +=  \
 	library/tty.o \
 	library/ugraphs.o \
 	library/uri.o \
+	library/url.o \
 	library/uuid.o \
 	library/when.o \
 	library/yall.o

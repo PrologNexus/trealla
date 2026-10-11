@@ -14,6 +14,7 @@
 	uri_authority_components/2,
 	uri_authority_data/3,
 	uri_encoded/3,
+	www_form_encode/2,
 	uri_iri/2,
 	uri_file_name/2,
 	uri_edit/3
@@ -213,6 +214,20 @@ uri_encoded(Component, Value, Encoded) :-
 	->	'$uri_encode'(Component, Value, Encoded0),
 		Encoded = Encoded0
 	;	'$uri_decode'(Component, Encoded, Value)
+	).
+
+% www_form_encode(?Value, ?Encoded)
+%
+% As SWI's library(url): only alphanumerics and -_.~ pass, everything else
+% is %xx in lowercase over UTF-8; decoding also reads '+' as a space.
+
+www_form_encode(Value, Encoded) :-
+	(	nonvar(Value)
+	->	'$uri_encode'('$www_form', Value, Encoded0),
+		Encoded = Encoded0
+	;	nonvar(Encoded)
+	->	'$uri_decode'('$www_form', Encoded, Value)
+	;	throw(error(instantiation_error, www_form_encode/2))
 	).
 
 % uri_iri(?URI, ?IRI)
