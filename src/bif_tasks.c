@@ -107,7 +107,7 @@ bool do_yield_then(query *q, bool status)
 	return false;
 }
 
-// yield/0 means "let the others have a turn", not "sleep for a bit", so
+// task_yield/0 means "let the others have a turn", not "sleep for a bit", so
 // it asks for no deadline at all and the scheduler puts the task back on
 // the ready queue as it stands.
 //
@@ -236,7 +236,7 @@ static void pop_task(query *q, query *task);
 // stays on its spawner's q->tasks registry, and every query on the
 // chain above it counts it in num_subtasks. So the scheduler answers
 // "what can run", and the registry answers "whose is it" - which is
-// what lets wait/0 mean "until my own work is done" while the queues
+// what lets task_wait/0 mean "until my own work is done" while the queues
 // themselves are shared.
 
 // Which scheduler a query's tasks belong to: the one on its thread
@@ -246,7 +246,7 @@ static void pop_task(query *q, query *task);
 
 // Originally only ever called by a thread lazily creating its own
 // scheduler (push_task(), below - single-writer, no race possible).
-// send/2 broke that invariant: it needs the *target's* scheduler from
+// task_send/2 broke that invariant: it needs the *target's* scheduler from
 // whatever thread happens to be sending, which may be the first thing
 // to touch that target's scheduler at all.
 //
@@ -755,7 +755,7 @@ static void sched_run(query *q)
 }
 
 // A task counts against everyone above it, not just its spawner, so
-// that a wait/0 high up knows there is still work underneath it even
+// that a task_wait/0 high up knows there is still work underneath it even
 // when its own direct children have all finished.
 
 static void count_subtask(query *q, int delta)
@@ -943,7 +943,7 @@ void tasks_destroy(thread *t)
 	release_lock(&t->tasks_guard);
 }
 
-static bool bif_end_wait_0(query *q)
+static bool bif_task_end_wait_0(query *q)
 {
 	if (q->parent)
 		q->parent->end_wait = true;
@@ -951,7 +951,7 @@ static bool bif_end_wait_0(query *q)
 	return true;
 }
 
-static bool bif_wait_0(query *q)
+static bool bif_task_wait_0(query *q)
 {
 	if (sched_get(q))
 		sched_run(q);
@@ -960,7 +960,7 @@ static bool bif_wait_0(query *q)
 	return true;
 }
 
-static bool bif_yield_0(query *q)
+static bool bif_task_yield_0(query *q)
 {
 	if (q->retry)
 		return true;
@@ -968,7 +968,7 @@ static bool bif_yield_0(query *q)
 	return do_yield_now(q);
 }
 
-static bool bif_call_task_n(query *q)
+static bool bif_task_call_n(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
@@ -1055,11 +1055,11 @@ static bool bif_call_task_n(query *q)
 	return true;
 }
 
-// call_task/N with the new task's address handed back immediately,
+// task_call/N with the new task's address handed back immediately,
 // mirroring thread_create/2 - unlike task_self/1's lazy registration,
 // this registers eagerly, before the task has run a single instruction,
 // because the whole point is a caller holding Qid and being able to
-// send/2 to it right away. No variadic call_task(Goal,A1,...,Qid) form:
+// task_send/2 to it right away. No variadic task_call(Goal,A1,...,Qid) form:
 // Qid is always the second and only other argument, and a caller
 // wanting extra goal arguments just builds the compound itself, e.g.
 // task_create(worker(A,B,C), Qid).
@@ -1109,7 +1109,7 @@ static bool bif_task_create_2(query *q)
 	if (!call_check(q, tmp2, &status, true))
 		return status;
 
-	// See bif_call_task_n just above for why this stages through a
+	// See bif_task_call_n just above for why this stages through a
 	// malloc'd copy rather than cloning tmp2 directly.
 
 	pl_idx num_cells = tmp2->num_cells;
@@ -1143,7 +1143,7 @@ static bool bif_task_create_2(query *q)
 	return unify(q, p2, p2_ctx, &tmp_qid, q->st.cur_ctx);
 }
 
-static bool bif_fork_0(query *q)
+static bool bif_task_fork_0(query *q)
 {
 	cell *instr = q->st.instr + q->st.instr->num_cells;
 	query *task = query_create_task(q, instr);
@@ -1199,7 +1199,7 @@ static bool bif_sys_set_future_1(query *q)
 // comment in internal.h and the check in sched_run() for why the
 // `error = true` that actually stops the task has to happen on the
 // task's own owning thread, not this one. sched_promote() is the same
-// unconditionally-safe call send/2 already makes - a no-op if the task
+// unconditionally-safe call task_send/2 already makes - a no-op if the task
 // is already ready or running, which just means the cancellation is
 // picked up next time it parks rather than instantly: there is no
 // preemption for a cooperative task, only the next checkpoint.
@@ -1285,7 +1285,7 @@ static bool bif_task_self_1(query *q)
 	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
 }
 
-static bool bif_send_2(query *q)
+static bool bif_task_send_2(query *q)
 {
 	GET_FIRST_ARG(p1,integer);
 	GET_NEXT_ARG(p2,nonvar);
@@ -1373,11 +1373,11 @@ static bool bif_send_2(query *q)
 	return true;
 }
 
-static bool bif_recv_1(query *q)
+static bool bif_task_recv_1(query *q)
 {
 	GET_FIRST_ARG(p1,any);
 
-	// Under our own scheduler's lock: another thread's send/2 can be
+	// Under our own scheduler's lock: another thread's task_send/2 can be
 	// pushing into this mailbox concurrently right now.
 
 	scheduler *s = sched_get(q);
@@ -1409,8 +1409,8 @@ static bool bif_recv_1(query *q)
 	return false;
 }
 
-// Backstop nap for recv/2's park, mirroring MSG_TASK_POLL_MS
-// (bif_threads.c): send/2 already promotes this task on every send
+// Backstop nap for task_recv/2's park, mirroring MSG_TASK_POLL_MS
+// (bif_threads.c): task_send/2 already promotes this task on every send
 // (sched_promote() is a correct no-op if we are not actually parked
 // yet, per its own comment), so this is not the wakeup path in the
 // ordinary case - it only bounds how long a missed promote (this task
@@ -1418,21 +1418,21 @@ static bool bif_recv_1(query *q)
 
 #define TASK_RECV_POLL_MS 5
 
-// Blocking counterpart to recv/1, with the same in-place selective
+// Blocking counterpart to task_recv/1, with the same in-place selective
 // scan. Opts takes timeout(Seconds) (int or float); with no timeout,
 // blocks indefinitely. See do_match_message_()'s do_wait_message() in
 // bif_threads.c for the dual-path pattern this mirrors, and why it has
 // to be dual: do_yield() only parks a *task* (it is a correct no-op -
 // an immediate `true` - for anything else, per its own q->is_task
-// guard), but recv/2 can just as well be called from a plain top-level
+// guard), but task_recv/2 can just as well be called from a plain top-level
 // directive or a thread's own root query, which are not tasks. Get
 // this wrong and a non-task caller's do_yield() silently no-ops,
-// making the surrounding recv/2 vacuously "succeed" without binding or
+// making the surrounding task_recv/2 vacuously "succeed" without binding or
 // checking anything at all - caught by a test where a message that was
 // never sent appeared to have been received instantly.
 //
 // So: q->is_task parks via do_yield() and returns to the scheduler,
-// same as recv/1's plain wait would if it had one; otherwise this
+// same as task_recv/1's plain wait would if it had one; otherwise this
 // blocks the real OS thread directly, sleeping and rescanning in a
 // plain C loop, the same as do_wait_message()'s non-task branch calls
 // suspend_thread() instead of parking. The deadline still has to live
@@ -1441,7 +1441,7 @@ static bool bif_recv_1(query *q)
 // deadline recomputed there would reset the clock every time; q->retry
 // - already true on that re-entry - is what stops that.
 
-static bool bif_recv_2(query *q)
+static bool bif_task_recv_2(query *q)
 {
 	GET_FIRST_ARG(p1,any);
 	GET_NEXT_ARG(p2,list_or_nil);
@@ -1540,25 +1540,25 @@ static bool bif_recv_2(query *q)
 builtins g_tasks_bifs[] =
 {
 	{"task_self", 1, bif_task_self_1, "-integer", false, false, BLAH},
-	{"send", 2, bif_send_2, "+integer,+term", false, false, BLAH},
-	{"recv", 1, bif_recv_1, "?term", false, false, BLAH},
-	{"recv", 2, bif_recv_2, "?term,+list", false, false, BLAH},
+	{"task_send", 2, bif_task_send_2, "+integer,+term", false, false, BLAH},
+	{"task_recv", 1, bif_task_recv_1, "?term", false, false, BLAH},
+	{"task_recv", 2, bif_task_recv_2, "?term,+list", false, false, BLAH},
 	{"task_create", 2, bif_task_create_2, ":callable,-integer", false, false, BLAH},
 	{"task_cancel", 1, bif_task_cancel_1, "+integer", false, false, BLAH},
 
-	{"call_task", 1, bif_call_task_n, ":callable", false, false, BLAH},
-	{"call_task", 2, bif_call_task_n, ":callable,?term", false, false, BLAH},
-	{"call_task", 3, bif_call_task_n, ":callable,?term,?term", false, false, BLAH},
-	{"call_task", 4, bif_call_task_n, ":callable,?term,?term,?term", false, false, BLAH},
-	{"call_task", 5, bif_call_task_n, ":callable,?term,?term,?term,?term", false, false, BLAH},
-	{"call_task", 6, bif_call_task_n, ":callable,?term,?term,?term,?term,?term", false, false, BLAH},
-	{"call_task", 7, bif_call_task_n, ":callable,?term,?term,?term,?term,?term,?term", false, false, BLAH},
-	{"call_task", 8, bif_call_task_n, ":callable,?term,?term,?term,?term,?term,?term,?term", false, false, BLAH},
+	{"task_call", 1, bif_task_call_n, ":callable", false, false, BLAH},
+	{"task_call", 2, bif_task_call_n, ":callable,?term", false, false, BLAH},
+	{"task_call", 3, bif_task_call_n, ":callable,?term,?term", false, false, BLAH},
+	{"task_call", 4, bif_task_call_n, ":callable,?term,?term,?term", false, false, BLAH},
+	{"task_call", 5, bif_task_call_n, ":callable,?term,?term,?term,?term", false, false, BLAH},
+	{"task_call", 6, bif_task_call_n, ":callable,?term,?term,?term,?term,?term", false, false, BLAH},
+	{"task_call", 7, bif_task_call_n, ":callable,?term,?term,?term,?term,?term,?term", false, false, BLAH},
+	{"task_call", 8, bif_task_call_n, ":callable,?term,?term,?term,?term,?term,?term,?term", false, false, BLAH},
 
-	{"end_wait", 0, bif_end_wait_0, NULL, false, false, BLAH},
-	{"wait", 0, bif_wait_0, NULL, false, false, BLAH},
-	{"yield", 0, bif_yield_0, NULL, false, false, BLAH},
-	{"fork", 0, bif_fork_0, NULL, false, false, BLAH},
+	{"task_end_wait", 0, bif_task_end_wait_0, NULL, false, false, BLAH},
+	{"task_wait", 0, bif_task_wait_0, NULL, false, false, BLAH},
+	{"task_yield", 0, bif_task_yield_0, NULL, false, false, BLAH},
+	{"task_fork", 0, bif_task_fork_0, NULL, false, false, BLAH},
 
 	{"$cancel_future", 1, bif_sys_cancel_future_1, "+integer", false, false, BLAH},
 	{"$set_future", 1, bif_sys_set_future_1, "+integer", false, false, BLAH},

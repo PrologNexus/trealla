@@ -37,8 +37,8 @@ run_server(N) :-
 	tcp_socket(Srv), tcp_bind(Srv, '127.0.0.1':3443), tcp_listen(Srv, 5),
 	tcp_accept(Srv, Cl, _),
 	tcp_open_socket(Cl, S),
-	call_task(do_write(S, N)),
-	wait,
+	task_call(do_write(S, N)),
+	task_wait,
 	close(S),
 	tcp_close_socket(Srv).
 

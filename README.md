@@ -1226,24 +1226,24 @@ Jump to: [Core & terms](#core--terms) · [Control](#control) · [Arithmetic](#ar
 
 | Predicate | Template | |
 |---|---|---|
-| `call_task/1` | `call_task(:callable)` |  |
-| `call_task/2` | `call_task(:callable,?term)` |  |
-| `call_task/3` | `call_task(:callable,?term,?term)` |  |
-| `call_task/4` | `call_task(:callable,?term,?term,?term)` |  |
-| `call_task/5` | `call_task(:callable,?term,?term,?term,?term)` |  |
-| `call_task/6` | `call_task(:callable,?term,?term,?term,?term,?term)` |  |
-| `call_task/7` | `call_task(:callable,?term,?term,?term,?term,?term,?term)` |  |
-| `call_task/8` | `call_task(:callable,?term,?term,?term,?term,?term,?term,?term)` |  |
-| `end_wait/0` | `end_wait` |  |
-| `fork/0` | `fork` |  |
-| `recv/1` | `recv(?term)` |  |
-| `recv/2` | `recv(?term,+list)` |  |
-| `send/2` | `send(+integer,+term)` |  |
+| `task_call/1` | `task_call(:callable)` |  |
+| `task_call/2` | `task_call(:callable,?term)` |  |
+| `task_call/3` | `task_call(:callable,?term,?term)` |  |
+| `task_call/4` | `task_call(:callable,?term,?term,?term)` |  |
+| `task_call/5` | `task_call(:callable,?term,?term,?term,?term)` |  |
+| `task_call/6` | `task_call(:callable,?term,?term,?term,?term,?term)` |  |
+| `task_call/7` | `task_call(:callable,?term,?term,?term,?term,?term,?term)` |  |
+| `task_call/8` | `task_call(:callable,?term,?term,?term,?term,?term,?term,?term)` |  |
 | `task_cancel/1` | `task_cancel(+integer)` |  |
 | `task_create/2` | `task_create(:callable,-integer)` |  |
+| `task_end_wait/0` | `task_end_wait` |  |
+| `task_fork/0` | `task_fork` |  |
+| `task_recv/1` | `task_recv(?term)` |  |
+| `task_recv/2` | `task_recv(?term,+list)` |  |
 | `task_self/1` | `task_self(-integer)` |  |
-| `wait/0` | `wait` |  |
-| `yield/0` | `yield` |  |
+| `task_send/2` | `task_send(+integer,+term)` |  |
+| `task_wait/0` | `task_wait` |  |
+| `task_yield/0` | `task_yield` |  |
 
 </details>
 
@@ -2153,8 +2153,17 @@ Co-operative multitasking is available in the form of light-weight
 coroutines that run until they yield either explicitly or implicitly
 (when waiting on an event of some kind using pol() where available).
 
-	call_task/[1-n]	        # concurrent form of call/1-n
+	task_call/[1-8]	        # concurrent form of call/1-n
 	tasklist/[2-8]          # concurrent form of maplist/1-n
+	task_wait/0             # run tasks until this one's own are done
+	task_end_wait/0         # release the owner from task_wait/0 early
+	task_yield/0            # let the other tasks have a turn
+	task_fork/0             # run the rest of the clause as a new task
+
+These, with *task_send/2* and *task_recv/1,2* below, were *call_task/N*,
+*wait/0*, *end_wait/0*, *yield/0*, *fork/0*, *send/2* and *recv/1,2*
+before taking the *task_* prefix. That leaves the plain names free for
+programs and libraries to define, an actor library's *send/2* for one.
 
 An example:
 
@@ -2207,12 +2216,12 @@ as an address once it calls `task_self/1` to learn its own:
 
 	task_self/1				# task_self(-integer)
 	task_create/2			# task_create(:callable,-integer)
-	send/2					# send(+integer,+term)
-	recv/1					# recv(?term)
-	recv/2					# recv(?term,+opts)
+	task_send/2				# task_send(+integer,+term)
+	task_recv/1				# task_recv(?term)
+	task_recv/2				# task_recv(?term,+opts)
 	task_cancel/1			# task_cancel(+integer)
 
-`recv/1` never blocks; `recv/2` does, with *timeout(+float)* in opts
+`task_recv/1` never blocks; `task_recv/2` does, with *timeout(+float)* in opts
 for a bound or none for indefinite. Selective receive scans the
 mailbox in place - a message that does not match stays where it is.
 `task_create/2` hands back the new task's qid immediately, unlike
@@ -2242,7 +2251,7 @@ pong(Parent) :- task_actor_recv(ping), task_actor_send(Parent, pong).
 :- task_actor_self(Me),
    task_actor_spawn(pong(Me), Pid),
    task_actor_send(Pid, ping),
-   wait,
+   task_wait,
    task_actor_recv(pong),
    writeln(got_pong).
 ```

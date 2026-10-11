@@ -22,8 +22,8 @@ napper(N, S) :-
 	write(' ').
 
 main :-
-	call_task(napper(1, 0.3)),
-	call_task(napper(2, 0.2)),
-	call_task(napper(3, 0.1)),
-	wait,
+	task_call(napper(1, 0.3)),
+	task_call(napper(2, 0.2)),
+	task_call(napper(3, 0.1)),
+	task_wait,
 	nl.

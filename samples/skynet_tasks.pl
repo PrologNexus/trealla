@@ -17,7 +17,7 @@
 % ordinal. Size must be a power of Div, or the integer division reaches 0
 % before the base case and the tree never terminates.
 %
-% task_actor_recv/1 spins on yield/0 rather than truly blocking (recv/1
+% task_actor_recv/1 spins on task_yield/0 rather than truly blocking (task_recv/1
 % never blocked - see library(actors/tasks)'s header), so every actor
 % waiting on its children is burning some CPU polling rather than
 % parked. Measure before assuming that costs more than the OS-thread
@@ -109,7 +109,7 @@ run(Size, Div) :-
 	task_actor_self(Me),
 	get_time(T0),
 	task_actor_spawn(skynet(Me, 0, Size, Div), _),
-	wait,
+	task_wait,
 	task_actor_recv(Msg),
 	get_time(T1),
 	Ms is round((T1-T0)*1000),

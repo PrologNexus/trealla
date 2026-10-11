@@ -877,7 +877,7 @@ struct thread_ {
 	// it.
 
 	// Atomic because sched_get() reads it without a lock on the fast
-	// path: a thread other than the owner reaches it through send/2.
+	// path: a thread other than the owner reaches it through task_send/2.
 
 	scheduler *pl_atomic sched;
 
@@ -1073,11 +1073,11 @@ struct query_ {
 	unsigned varno, tab0_varno, cur_engine, cur_chan, my_chan;
 
 	// A task's own mailbox: list of task_msg nodes (bif_tasks.c),
-	// scanned in place by recv/1 so a skipped message keeps its
+	// scanned in place by task_recv/1 so a skipped message keeps its
 	// position rather than rotating to the back. Guarded by the
-	// owning thread's scheduler->guard, since send/2 can enqueue into
+	// owning thread's scheduler->guard, since task_send/2 can enqueue into
 	// this from any thread. cur_task_qid is the sender of the last
-	// message recv/1 matched - stored for a reply-to, not yet exposed
+	// message task_recv/1 matched - stored for a reply-to, not yet exposed
 	// to Prolog. Separate from cur_chan (a thread chan, unsigned):
 	// qid is process-wide and uint64_t, would truncate if shared.
 

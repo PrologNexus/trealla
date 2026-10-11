@@ -27,7 +27,7 @@ report(Name, Got, Expect) :-
 main_looper(N) :-
 	assertz(main_tick(N)),
 	N1 is N + 1,
-	yield,
+	task_yield,
 	main_looper(N1).
 
 main_tick_count(N) :- aggregate_all(count, main_tick(_), N).
@@ -40,7 +40,7 @@ cancel_from_other_thread :-
 	retractall(main_tick(_)),
 	task_create(main_looper(0), Qid),
 	thread_create(canceller(Qid), Id, []),
-	wait,
+	task_wait,
 	thread_join(Id, _),
 	main_tick_count(Stopped),
 	sleep(0.05),
@@ -57,21 +57,21 @@ cancel_from_other_thread :-
 remote_looper(N) :-
 	assertz(remote_tick(N)),
 	N1 is N + 1,
-	yield,
+	task_yield,
 	remote_looper(N1).
 
 remote_tick_count(N) :- aggregate_all(count, remote_tick(_), N).
 
 remote_host(ReadyQid) :-
 	task_create(remote_looper(0), ChildQid),
-	send(ReadyQid, child_qid(ChildQid)),
-	wait.
+	task_send(ReadyQid, child_qid(ChildQid)),
+	task_wait.
 
 cancel_task_on_other_thread :-
 	retractall(remote_tick(_)),
 	task_self(Me),
 	thread_create(remote_host(Me), HostId, []),
-	recv(child_qid(ChildQid), [timeout(2.0)]),
+	task_recv(child_qid(ChildQid), [timeout(2.0)]),
 	sleep(0.05),
 	remote_tick_count(Before),
 	task_cancel(ChildQid),
@@ -92,7 +92,7 @@ cancel_task_on_other_thread :-
 
 race_looper(Id) :-
 	assertz(race_alive(Id)),
-	yield,
+	task_yield,
 	race_looper(Id).
 
 race_canceller(Qids) :-
@@ -106,7 +106,7 @@ concurrent_cancel_race :-
 	), Qids),
 	thread_create(race_canceller(Qids), Id1, []),
 	thread_create(race_canceller(Qids), Id2, []),
-	wait,
+	task_wait,
 	thread_join(Id1, _),
 	thread_join(Id2, _),
 	report(concurrent_cancel_race, done, done).

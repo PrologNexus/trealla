@@ -13,7 +13,7 @@
 %     that keeps running and gets stopped mid-flight needs hosting on
 %     a thread of its own (the library's own documented pattern), and
 %     belongs in tests/misc.
-%   - cross-thread send/recv and cancellation, for the same reason as
+%   - cross-thread task_send/task_recv and cancellation, for the same reason as
 %     task_messaging.pl and task_cancel.pl.
 
 :- initialization(main).
@@ -36,13 +36,13 @@ spawn_send_recv :-
 	task_actor_self(Me),
 	task_actor_spawn(pong(Me), Pid),
 	task_actor_send(Pid, ping),
-	wait,
+	task_wait,
 	( task_actor_recv(pong) -> R = ok ; R = failed ),
 	report(spawn_send_recv, R, ok).
 
 % Links deliver a death notice, exactly once, carrying why: true for
 % plain success, false for plain failure, exception(E) for a thrown E.
-% All three run linked and unwaited-for; wait/0 (via task's own
+% All three run linked and unwaited-for; task_wait/0 (via task's own
 % num_subtasks accounting, unrelated to the link mechanism) still
 % blocks until all three have reported, since it tracks the whole
 % subtree regardless of linking.
@@ -55,7 +55,7 @@ link_exit_reasons :-
 	task_actor_spawn(dies_ok, P1, [link(true)]),
 	task_actor_spawn(dies_fail, P2, [link(true)]),
 	task_actor_spawn(dies_throw, P3, [link(true)]),
-	wait,
+	task_wait,
 	findall(Pid-Reason, (
 		between(1, 3, _),
 		task_actor_recv(exit(Pid, Reason))
@@ -63,7 +63,7 @@ link_exit_reasons :-
 	msort(Results, Sorted),
 	report(link_exit_reasons, Sorted, [P1-true, P2-false, P3-exception(boom)]).
 
-% task_actor_recv/2's timeout(T) option is recv/2's, unmodified - a
+% task_actor_recv/2's timeout(T) option is task_recv/2's, unmodified - a
 % waiting actor with nothing arriving must time out, not hang or
 % vacuously succeed.
 
@@ -74,7 +74,7 @@ waits_actor(ParentQid) :-
 recv_timeout_option :-
 	task_actor_self(Me),
 	task_actor_spawn(waits_actor(Me), _),
-	wait,
+	task_wait,
 	( task_actor_recv(done(R)) -> true ; R = no_message ),
 	report(recv_timeout_option, R, timed_out).
 
@@ -96,7 +96,7 @@ restart_budget_exhausted :-
 	retractall(run_count(_)),
 	assertz(run_count(0)),
 	task_supervisor_start([flaky], _Sup, [max_restarts(3), period(5)]),
-	wait,
+	task_wait,
 	run_count(Count),
 	% max_restarts(3) means the original run plus 3 retries = 4 runs
 	% before the budget is called exhausted and the supervisor stops.

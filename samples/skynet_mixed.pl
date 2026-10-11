@@ -31,7 +31,7 @@
 %
 % Task bookkeeping took prolog_lock(), a process-wide mutex, three or
 % four times per task: register_task(), unregister_task(), the registry
-% lookup behind send/2 and sched_get() in src/bif_tasks.c all took it, and
+% lookup behind task_send/2 and sched_get() in src/bif_tasks.c all took it, and
 % this benchmark's whole workload is 1.11M task creates, sends and
 % destroys. sched_get() only ever needed it to allocate one scheduler
 % per thread, so it is double-checked now; the registry became one
@@ -84,7 +84,7 @@
 % describes. All the parallelism is meant to come from the threads.
 %
 % library(actors/tasks) is kept rather than raw task_create/2 and
-% send/2 so the only variable against skynet_tasks.pl is the threading.
+% task_send/2 so the only variable against skynet_tasks.pl is the threading.
 % It is not free - the actor layer's link bookkeeping is two dynamic
 % database operations per actor, on a database lock every thread
 % shares - but dropping it here would flatter this file against the one
@@ -144,7 +144,7 @@ run_slice(Idx, Hi, SubSize, Div, Acc, Tot) :-
 	Num is Idx * SubSize,
 	task_actor_self(Me),
 	task_actor_spawn(skynet(Me, Num, SubSize, Div), _),
-	wait,
+	task_wait,
 	'$skynet_recv_result'(X),
 	Acc1 is Acc + X,
 	Idx1 is Idx + 1,

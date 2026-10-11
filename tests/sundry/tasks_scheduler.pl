@@ -2,14 +2,14 @@
 % network, so it is deterministic.
 %
 % Before the scheduler was rewritten around a ready queue, a timer heap
-% and a descriptor list, wait/0 and await/0 were two copies of one scan
+% and a descriptor list, task_wait/0 and await/0 were two copies of one scan
 % over the task list. Two properties below are regression guards for
 % what that scan got wrong:
 %
 %   - dispatch was LIFO, and the scan stopped at the 64th spawned task,
 %     so past 64 tasks the oldest ones starved (fair_order, backlog).
-%   - end_wait/0 was honoured by wait/0 but not await/0, which left the
-%     flag set for the *next* wait/0 to trip over (end_wait_once).
+%   - task_end_wait/0 was honoured by task_wait/0 but not await/0, which left the
+%     flag set for the *next* task_wait/0 to trip over (end_wait_once).
 %
 % Tasks reported over send/1 and were read with recv/1 until GUSTTO
 % phase 1 removed both, along with await/0. They use the shared database
@@ -38,33 +38,33 @@ drain_(Acc, Sum) :-
 % Tasks run in the order they were spawned.
 
 fair_order :-
-	forall(between(1,10,N), call_task(emit,N)),
-	wait, nl.
+	forall(between(1,10,N), task_call(emit,N)),
+	task_wait, nl.
 
 % Well past the old 64-task cap: every task must get its turn, not just
 % the first 64 to be scanned.
 
 backlog :-
-	forall(between(1,200,N), call_task(square,N)),
-	wait, drain(Sum),
+	forall(between(1,200,N), task_call(square,N)),
+	task_wait, drain(Sum),
 	Expect is (200*201*401)//6,
 	(	Sum =:= Expect
 	->	format("backlog: ok~n")
 	;	format("backlog: FAILED ~w vs ~w~n", [Sum,Expect])
 	).
 
-% A task calling end_wait/0 releases the parent from wait/0. The flag
-% must not survive into the next wait/0, which used to make it return
+% A task calling task_end_wait/0 releases the parent from task_wait/0. The flag
+% must not survive into the next task_wait/0, which used to make it return
 % before running anything.
 
-stopper :- end_wait.
+stopper :- task_end_wait.
 
 end_wait_once :-
-	call_task(stopper),
-	call_task(square, 9),
-	wait,
-	call_task(square, 10),
-	wait,
+	task_call(stopper),
+	task_call(square, 9),
+	task_wait,
+	task_call(square, 10),
+	task_wait,
 	drain(Sum),
 	(	Sum =:= 181
 	->	format("end_wait_once: ok~n")
@@ -75,8 +75,8 @@ end_wait_once :-
 % 50ms so this does not depend on a lightly loaded machine.
 
 timers :-
-	forall(member(N,[3,1,2]), call_task(napper,N)),
-	wait, nl.
+	forall(member(N,[3,1,2]), task_call(napper,N)),
+	task_wait, nl.
 
 main :-
 	fair_order,
@@ -85,7 +85,7 @@ main :-
 	timers,
 	yields.
 
-% yield/0 is a requeue, not a sleep: it asks for no deadline and goes
+% task_yield/0 is a requeue, not a sleep: it asks for no deadline and goes
 % straight back on the ready queue. It used to be worth a millisecond
 % each - do_yield() clamped a zero delay up to 1 - so this loop alone
 % took over half a second.
@@ -95,11 +95,11 @@ main :-
 % completion rather than stalling or starving the task.
 
 yielder(0) :- !, assertz(result(0)).
-yielder(N) :- yield, N1 is N-1, yielder(N1).
+yielder(N) :- task_yield, N1 is N-1, yielder(N1).
 
 yields :-
-	call_task(yielder, 2000),
-	wait,
+	task_call(yielder, 2000),
+	task_wait,
 	(	retract(result(0))
 	->	format("yields: ok~n")
 	;	format("yields: FAILED yielder did not finish~n")
