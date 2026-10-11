@@ -381,7 +381,10 @@ static bool bif_sys_destroy_module_1(query *q)
 	return true;
 }
 
-// '$create_module'(+Name): an empty module, for in_temporary_module/3.
+// '$create_module'(+Name): an empty module, for in_temporary_module/3,
+// which destroys it after. One that exists already is only taken if it
+// is still empty, as a call to M:G makes one: no predicates, not even
+// declared ones, and no imports.
 
 static bool bif_sys_create_module_1(query *q)
 {
@@ -389,10 +392,16 @@ static bool bif_sys_create_module_1(query *q)
 	module *m = find_module(q->pl, C_STR(q, p1));
 
 	if (m) {
-		for (predicate *pr = list_front(&m->predicates); pr; pr = list_next(pr)) {
-			if (pr->head && strcmp(C_STR(q, &pr->key), "$predicate_property"))
-				return throw_error(q, p1, p1_ctx, "permission_error", "create,module");
+		bool in_use = (m == q->pl->user_m) || (m == q->pl->system_m)
+			|| m->prebuilt || m->orig || m->from_file || m->idx_used;
+
+		for (predicate *pr = list_front(&m->predicates); pr && !in_use; pr = list_next(pr)) {
+			if (!pr->is_abolished && strcmp(C_STR(q, &pr->key), "$predicate_property"))
+				in_use = true;
 		}
+
+		if (in_use)
+			return throw_error(q, p1, p1_ctx, "permission_error", "create,module");
 
 		return true;
 	}

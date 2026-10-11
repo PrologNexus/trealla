@@ -521,9 +521,10 @@ As in *SWI-Prolog*, *predicate_property/2* also answers *defined*,
 
 As in *SWI-Prolog*, *in_temporary_module/3* runs its setup goal then its
 goal in a fresh module (named if the first argument is unbound) and
-destroys it after, as *destroy_module/1* does. A module loaded from a file
-can't be destroyed. A goal still holding one of its predicates afterwards
-gets an existence error.
+destroys it after, as *destroy_module/1* does. A module named for it must
+not exist yet, or be empty, and a module loaded from a file can't be
+destroyed. A goal still holding one of its predicates afterwards gets an
+existence error.
 
 	load_text/2					# load_text(+atom,+opts)
 

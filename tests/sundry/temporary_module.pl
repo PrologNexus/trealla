@@ -30,4 +30,8 @@ main :-
 	use_module(library(lists)),
 	catch(destroy_module(lists), error(E4, _), true), writeq(E4), nl,
 	destroy_module(no_such_module),
+	% one already in use, if only by a declaration, isn't taken and destroyed
+	'$create_module'(tmapp), load_text(":- dynamic(store/1).", [module(tmapp)]),
+	catch(in_temporary_module(tmapp, true, true), error(E5, _), true), writeq(E5), nl,
+	( predicate_property(tmapp:store(_), dynamic) -> writeln(tmapp_kept) ; writeln(tmapp_lost) ),
 	writeln(done).

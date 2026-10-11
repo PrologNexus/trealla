@@ -9,4 +9,6 @@ gone
 gone
 permission_error(destroy,module,user)
 permission_error(destroy,module,lists)
+permission_error(create,module,tmapp)
+tmapp_kept
 done

@@ -3688,22 +3688,28 @@ void module_destroy(module *m)
 
 static void keyval_free(const void *key, const void *val, const void *p);
 
-// For destroy_module/1: its own operators and blackboard go, leaving empty
-// tables, as code with a stale pointer to the module may still look.
+// For destroy_module/1: its own operators and blackboard go, as code with
+// a stale pointer to the module may still look. Operators are looked up
+// without a lock, so they are zeroed, not freed (module_destroy() frees
+// them at exit), and the blackboard is swapped under the lock it is
+// always used under.
 
 void module_clear_tables(module *m)
 {
 	sliter *iter = sl_first(m->ops);
 	op_table *opptr;
 
-	while (sl_next(iter, (void**)&opptr))
-		TPL_free(opptr);
+	while (sl_next(iter, (void**)&opptr)) {
+		opptr->priority = 0;
+		opptr->exported = false;
+	}
 
 	sl_done(iter);
-	sl_destroy(m->ops);
-	m->ops = sl_create((void*)fake_strcmp, NULL, NULL);
+	skiplist *keyval = sl_create((void*)fake_strcmp, (void*)keyval_free, NULL);
+	prolog_lock(m->pl);
 	sl_destroy(m->keyval);
-	m->keyval = sl_create((void*)fake_strcmp, (void*)keyval_free, NULL);
+	m->keyval = keyval;
+	prolog_unlock(m->pl);
 }
 
 void module_duplicate(prolog *pl, module *m, const char *name, unsigned arity)
