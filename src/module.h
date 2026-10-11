@@ -27,7 +27,7 @@ unsigned match_op(module *m, const char *name, unsigned *specifier, unsigned ari
 unsigned get_op(module *m, const char *name, unsigned specifier);
 bool set_op(module *m, const char *name, unsigned specifier, unsigned priority);
 void export_op(module *m, const char *name, unsigned specifier);
-void visit_ops(module *m, void (*fn)(void*, const op_table*), void *ctx);
+void visit_ops(module *m, const char *name, void (*fn)(void*, const op_table*), void *ctx);
 predicate *find_functor(module *m, const char *name, unsigned arity);
 predicate *find_predicate(module *m, cell *c);
 predicate *search_predicate(module *m, cell *c);

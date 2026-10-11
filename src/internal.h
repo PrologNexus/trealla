@@ -594,6 +594,7 @@ typedef struct {
 	unsigned specifier;
 	unsigned priority;
 	bool exported;						// in its module's export list, so seen by importers
+	bool changed;						// a standard operator op/3 has redefined, or removed, here
 } op_table;
 
 // Where *ctx* is the context of the var

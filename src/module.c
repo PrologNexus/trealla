@@ -28,23 +28,23 @@ struct loaded_file_ {
 
 static const op_table g_ops[] =
 {
-	{":-", OP_XFX, 1200, false},
-	{":-", OP_FX, 1200, false},
-	{"-->", OP_XFX, 1200, false},
-	{"?-", OP_FX, 1200, false},
-	{"?-", OP_XFX, 1200, false},				// a quad labelled by a ground term
-	{"|", OP_XFY, 1105, false},
-	{";", OP_XFY, 1100, false},
-	{"->", OP_XFY, 1050, false},
-	{"*->", OP_XFY, 1050, false},
-	{",", OP_XFY, 1000, false},
+	{":-", OP_XFX, 1200, false, false},
+	{":-", OP_FX, 1200, false, false},
+	{"-->", OP_XFX, 1200, false, false},
+	{"?-", OP_FX, 1200, false, false},
+	{"?-", OP_XFX, 1200, false, false},				// a quad labelled by a ground term
+	{"|", OP_XFY, 1105, false, false},
+	{";", OP_XFY, 1100, false, false},
+	{"->", OP_XFY, 1050, false, false},
+	{"*->", OP_XFY, 1050, false, false},
+	{",", OP_XFY, 1000, false, false},
 
-	{"public", OP_FX, 1150, false},
-	{"discontiguous", OP_FX, 1150, false},
-	{"multifile", OP_FX, 1150, false},
-	{"dynamic", OP_FX, 1150, false},
-	{"ensure_loaded", OP_FX, 1150, false},
-	{"meta_predicate", OP_FX, 1150, false},
+	{"public", OP_FX, 1150, false, false},
+	{"discontiguous", OP_FX, 1150, false, false},
+	{"multifile", OP_FX, 1150, false, false},
+	{"dynamic", OP_FX, 1150, false, false},
+	{"ensure_loaded", OP_FX, 1150, false, false},
+	{"meta_predicate", OP_FX, 1150, false, false},
 
 	//{"op", OP_FX, 1150},
 	//{"initialization", OP_FX, 1150},
@@ -52,57 +52,57 @@ static const op_table g_ops[] =
 	//{"module", OP_FX, 1150},
 	//{"use_module", OP_FX, 1150},
 
-	{"\\+", OP_FY, 900, false},
-	{"as", OP_XFX, 700, false},
-	{"is", OP_XFX, 700, false},
-	{"=", OP_XFX, 700, false},
-	{"\\=", OP_XFX, 700, false},
-	{"==", OP_XFX, 700, false},
-	{"\\==", OP_XFX, 700, false},
-	{"=@=", OP_XFX, 700, false},
-	{"\\=@=", OP_XFX, 700, false},
-	{"=:=", OP_XFX, 700, false},
-	{"=\\=", OP_XFX, 700, false},
-	{"<", OP_XFX, 700, false},
-	{"=<", OP_XFX, 700, false},
-	{">", OP_XFX, 700, false},
-	{">=", OP_XFX, 700, false},
-	{"@<", OP_XFX, 700, false},
-	{"@=<", OP_XFX, 700, false},
-	{"@>", OP_XFX, 700, false},
-	{"@>=", OP_XFX, 700, false},
-	{"=..", OP_XFX, 700, false},
-	{":", OP_XFY, 600, false},
-	{"+", OP_YFX, 500, false},
-	{"-", OP_YFX, 500, false},
-	{"?", OP_FX, 500, false},
-	{"/\\", OP_YFX, 500, false},
-	{"\\/", OP_YFX, 500, false},
-	{"*", OP_YFX, 400, false},
-	{"/", OP_YFX, 400, false},
-	{"//", OP_YFX, 400, false},
-	{"div", OP_YFX, 400, false},
-	{"rdiv", OP_YFX, 400, false},
-	{"rem", OP_YFX, 400, false},
-	{"mod", OP_YFX, 400, false},
-	{"<<", OP_YFX, 400, false},
-	{">>", OP_YFX, 400, false},
-	{"**", OP_XFX, 200, false},
-	{"^", OP_XFY, 200, false},
-	{"\\", OP_FY, 200, false},
-	{"-", OP_FY, 200, false},
-	{"+", OP_FY, 200, false},
+	{"\\+", OP_FY, 900, false, false},
+	{"as", OP_XFX, 700, false, false},
+	{"is", OP_XFX, 700, false, false},
+	{"=", OP_XFX, 700, false, false},
+	{"\\=", OP_XFX, 700, false, false},
+	{"==", OP_XFX, 700, false, false},
+	{"\\==", OP_XFX, 700, false, false},
+	{"=@=", OP_XFX, 700, false, false},
+	{"\\=@=", OP_XFX, 700, false, false},
+	{"=:=", OP_XFX, 700, false, false},
+	{"=\\=", OP_XFX, 700, false, false},
+	{"<", OP_XFX, 700, false, false},
+	{"=<", OP_XFX, 700, false, false},
+	{">", OP_XFX, 700, false, false},
+	{">=", OP_XFX, 700, false, false},
+	{"@<", OP_XFX, 700, false, false},
+	{"@=<", OP_XFX, 700, false, false},
+	{"@>", OP_XFX, 700, false, false},
+	{"@>=", OP_XFX, 700, false, false},
+	{"=..", OP_XFX, 700, false, false},
+	{":", OP_XFY, 600, false, false},
+	{"+", OP_YFX, 500, false, false},
+	{"-", OP_YFX, 500, false, false},
+	{"?", OP_FX, 500, false, false},
+	{"/\\", OP_YFX, 500, false, false},
+	{"\\/", OP_YFX, 500, false, false},
+	{"*", OP_YFX, 400, false, false},
+	{"/", OP_YFX, 400, false, false},
+	{"//", OP_YFX, 400, false, false},
+	{"div", OP_YFX, 400, false, false},
+	{"rdiv", OP_YFX, 400, false, false},
+	{"rem", OP_YFX, 400, false, false},
+	{"mod", OP_YFX, 400, false, false},
+	{"<<", OP_YFX, 400, false, false},
+	{">>", OP_YFX, 400, false, false},
+	{"**", OP_XFX, 200, false, false},
+	{"^", OP_XFY, 200, false, false},
+	{"\\", OP_FY, 200, false, false},
+	{"-", OP_FY, 200, false, false},
+	{"+", OP_FY, 200, false, false},
 
-	{"++", OP_FY, 100, false},			// used in mode declarations
-	{"--", OP_FY, 100, false},			// used in mode declarations
-	{"@", OP_FY, 100, false},			// used in mode declarations
-	{":", OP_FY, 100, false},			// used in mode declarations
+	{"++", OP_FY, 100, false, false},			// used in mode declarations
+	{"--", OP_FY, 100, false, false},			// used in mode declarations
+	{"@", OP_FY, 100, false, false},			// used in mode declarations
+	{":", OP_FY, 100, false, false},			// used in mode declarations
 
-	{DOUBLE_BAR, OP_XFY, 1, false},
+	{DOUBLE_BAR, OP_XFY, 1, false, false},
 
 	//{"$", OP_FX, 1},
 
-	{0,0,0,false}
+	{0,0,0,false,false}
 };
 
 builtins *get_module_help(module *m, const char *name, unsigned arity, bool *found, bool *evaluable)
@@ -1747,21 +1747,20 @@ static bool any_op_name(const prolog *pl, const char *name)
 	return pl->op_names[h2/8] & (1 << (h2%8));
 }
 
-// Which of a module's operators a lookup sees: all of its own, an imported
-// module's exported ones, or the user module's own. As in SWI, every module
-// sees what user does: its own operators and those exported to it.
+// A module sees its own operators first, those exported to it having been
+// copied in when it imported them, then, as in SWI, those of the user
+// module, then the standard ones. Each module has its own copy of those,
+// so its own, and user's, are the ones op/3 has changed there.
 
-typedef enum { OPS_ALL, OPS_EXPORTED, OPS_USER } op_mode;
+typedef enum { OPS_ALL, OPS_CHANGED, OPS_DEFAULTS } op_mode;
 
 static bool op_visible(const op_table *ptr, op_mode mode, bool is_default)
 {
 	if (mode == OPS_ALL)
 		return true;
 
-	if (mode == OPS_EXPORTED)
-		return ptr->exported;
-
-	return !is_default;
+	bool changed = !is_default || ptr->changed;
+	return mode == OPS_CHANGED ? changed : !changed;
 }
 
 static bool set_op_internal(module *m, const char *name, unsigned specifier, unsigned priority)
@@ -1806,6 +1805,9 @@ static bool set_op_internal(module *m, const char *name, unsigned specifier, uns
 		if (!ptr->priority)
 			continue;
 
+		ptr->changed = true;
+		m->user_ops = true;
+
 		if (!priority) {
 			ptr->specifier = 0;
 			ptr->priority = 0;
@@ -1816,7 +1818,6 @@ static bool set_op_internal(module *m, const char *name, unsigned specifier, uns
 		ptr->priority = priority;
 		ptr->specifier = specifier;
 		sl_done(iter);
-		m->user_ops = true;
 		return true;
 	}
 
@@ -1826,7 +1827,7 @@ static bool set_op_internal(module *m, const char *name, unsigned specifier, uns
 	tmp->name = set_known(m, name);
 	tmp->priority = priority;
 	tmp->specifier = specifier;
-	tmp->exported = false;
+	tmp->exported = tmp->changed = false;
 	m->user_ops = true;
 	note_op_name(m->pl, tmp->name);
 	sl_app(m->ops, tmp->name, tmp);
@@ -1838,15 +1839,16 @@ bool set_op(module *m, const char *name, unsigned specifier, unsigned priority)
 	return set_op_internal(m, name, specifier, priority);
 }
 
-// Calls fn for each operator m sees, in the order a lookup tries them, a
-// name in the same class as one already seen being shadowed by it.
+// Calls fn for each operator m sees, or only those called name if given,
+// in the order a lookup tries them, a name in the same class as one
+// already seen being shadowed by it.
 
-static void visit_ops_table(skiplist *seen, skiplist *table, op_mode mode, bool is_default, void (*fn)(void*, const op_table*), void *ctx)
+static void visit_ops_table(skiplist *seen, skiplist *table, op_mode mode, bool is_default, const char *name, void (*fn)(void*, const op_table*), void *ctx)
 {
-	sliter *iter = sl_first(table);
+	sliter *iter = name ? sl_find_key(table, name) : sl_first(table);
 	op_table *ptr;
 
-	while (sl_next(iter, (void**)&ptr)) {
+	while (name ? sl_next_key(iter, (void**)&ptr) : sl_next(iter, (void**)&ptr)) {
 		if (!ptr->priority || !ptr->specifier || !op_visible(ptr, mode, is_default))
 			continue;
 
@@ -1869,158 +1871,105 @@ static void seen_free(const void *key, const void *val, const void *p)
 	TPL_free((void*)key);
 }
 
-void visit_ops(module *m, void (*fn)(void*, const op_table*), void *ctx)
+void visit_ops(module *m, const char *name, void (*fn)(void*, const op_table*), void *ctx)
 {
 	skiplist *seen = sl_create((void*)fake_strcmp, (void*)seen_free, NULL);
 
 	if (!seen)
 		return;
 
-	visit_ops_table(seen, m->defops, OPS_ALL, true, fn, ctx);
-	visit_ops_table(seen, m->ops, OPS_ALL, false, fn, ctx);
-
-	for (unsigned i = 0; i < m->idx_used; i++) {
-		module *tmp_m = m->used[i];
-
-		if ((m == tmp_m) || !tmp_m->user_ops)
-			continue;
-
-		visit_ops_table(seen, tmp_m->defops, OPS_EXPORTED, true, fn, ctx);
-		visit_ops_table(seen, tmp_m->ops, OPS_EXPORTED, false, fn, ctx);
-	}
-
 	module *user_m = m->pl->user_m;
 
-	if (user_m && (m != user_m)) {
-		if (user_m->user_ops)
-			visit_ops_table(seen, user_m->ops, OPS_USER, false, fn, ctx);
-
-		for (unsigned i = 0; i < user_m->idx_used; i++) {
-			module *tmp_m = user_m->used[i];
-
-			if ((m == tmp_m) || (user_m == tmp_m) || !tmp_m->user_ops)
-				continue;
-
-			visit_ops_table(seen, tmp_m->defops, OPS_EXPORTED, true, fn, ctx);
-			visit_ops_table(seen, tmp_m->ops, OPS_EXPORTED, false, fn, ctx);
-		}
+	if (!user_m || (m == user_m)) {
+		visit_ops_table(seen, m->defops, OPS_ALL, true, name, fn, ctx);
+		visit_ops_table(seen, m->ops, OPS_ALL, false, name, fn, ctx);
+	} else {
+		visit_ops_table(seen, m->defops, OPS_CHANGED, true, name, fn, ctx);
+		visit_ops_table(seen, m->ops, OPS_CHANGED, false, name, fn, ctx);
+		visit_ops_table(seen, user_m->defops, OPS_CHANGED, true, name, fn, ctx);
+		visit_ops_table(seen, user_m->ops, OPS_CHANGED, false, name, fn, ctx);
+		visit_ops_table(seen, m->defops, OPS_DEFAULTS, true, name, fn, ctx);
 	}
 
 	sl_destroy(seen);
 }
 
-// An op(P,T,Name) in a module's export list: importers see it.
+// An op(P,T,Name) in a module's export list: marked, for a module that
+// imports this one later, and copied to those that already have, as SWI
+// does, overriding even a standard operator there.
 
 void export_op(module *m, const char *name, unsigned specifier)
 {
+	unsigned priority = 0;
+
 	for (unsigned k = 0; k < 2; k++) {
 		sliter *iter = sl_find_key(k ? m->defops : m->ops, name);
 		op_table *ptr;
 
 		while (sl_next_key(iter, (void**)&ptr)) {
 			if (ptr->priority && (IS_INFIX(ptr->specifier) == IS_INFIX(specifier))
-				&& (IS_POSTFIX(ptr->specifier) == IS_POSTFIX(specifier)))
+				&& (IS_POSTFIX(ptr->specifier) == IS_POSTFIX(specifier))) {
 				ptr->exported = true;
+				priority = ptr->priority;
+			}
+		}
+
+		sl_done(iter);
+	}
+
+	if (!priority)
+		return;
+
+	for (module *tmp = list_front(&m->pl->modules); tmp; tmp = list_next(tmp)) {
+		for (unsigned i = 0; (i < tmp->idx_used) && (tmp != m); i++) {
+			if (tmp->used[i] == m) {
+				set_op_internal(tmp, name, specifier, priority);
+				break;
+			}
+		}
+	}
+}
+
+// What used exports, into m, which has just imported it.
+
+static void import_ops(module *m, module *used)
+{
+	for (unsigned k = 0; k < 2; k++) {
+		sliter *iter = sl_first(k ? used->defops : used->ops);
+		op_table *ptr;
+
+		while (sl_next(iter, (void**)&ptr)) {
+			if (ptr->exported && ptr->priority)
+				set_op_internal(m, ptr->name, ptr->specifier, ptr->priority);
 		}
 
 		sl_done(iter);
 	}
 }
 
-static unsigned search_op_internal(const module *m, const char *name, unsigned *specifier, bool prefer_unifix, op_mode mode)
+// One class of operator, infix or not, in one module's tables.
+
+static unsigned search_op_internal(const module *m, const char *name, unsigned *specifier, bool infix, op_mode mode)
 {
-	const op_table *ptr;
-	sliter *iter = sl_find_key(m->defops, name);
+	for (unsigned k = 0; k < 2; k++) {
+		sliter *iter = sl_find_key(k ? m->ops : m->defops, name);
+		const op_table *ptr;
 
-	while (sl_next_key(iter, (void**)&ptr)) {
-		if (!ptr->priority)
-			continue;
+		while (sl_next_key(iter, (void**)&ptr)) {
+			if (!ptr->priority || !op_visible(ptr, mode, !k))
+				continue;
 
-		if (!op_visible(ptr, mode, true))
-			continue;
+			if ((IS_INFIX(ptr->specifier) ? true : false) != infix)
+				continue;
 
-		if (!IS_INFIX(ptr->specifier))
-			continue;
+			if (specifier) *specifier = ptr->specifier;
+			unsigned n = ptr->priority;
+			sl_done(iter);
+			return n;
+		}
 
-		if (prefer_unifix)
-			continue;
-
-		if (specifier) *specifier = ptr->specifier;
-		unsigned n = ptr->priority;
 		sl_done(iter);
-		return n;
 	}
-
-	sl_done(iter);
-	iter = sl_find_key(m->ops, name);
-
-	while (sl_next_key(iter, (void**)&ptr)) {
-		if (!ptr->priority)
-			continue;
-
-		if (!op_visible(ptr, mode, false))
-			continue;
-
-		if (!IS_INFIX(ptr->specifier))
-			continue;
-
-		if (prefer_unifix)
-			continue;
-
-		if (specifier) *specifier = ptr->specifier;
-		unsigned n = ptr->priority;
-		sl_done(iter);
-		return n;
-	}
-
-	sl_done(iter);
-	iter = sl_find_key(m->defops, name);
-
-	while (sl_next_key(iter, (void**)&ptr)) {
-		if (!ptr->priority)
-			continue;
-
-		if (!op_visible(ptr, mode, true))
-			continue;
-
-		if (IS_INFIX(ptr->specifier))
-			continue;
-
-		if (prefer_unifix && !IS_PREFIX(ptr->specifier) && !IS_POSTFIX(ptr->specifier))
-			continue;
-
-		if (specifier) *specifier = ptr->specifier;
-		unsigned n = ptr->priority;
-		sl_done(iter);
-		return n;
-	}
-
-	sl_done(iter);
-	iter = sl_find_key(m->ops, name);
-
-	while (sl_next_key(iter, (void**)&ptr)) {
-		if (!ptr->priority)
-			continue;
-
-		if (!op_visible(ptr, mode, false))
-			continue;
-
-		if (IS_INFIX(ptr->specifier))
-			continue;
-
-		if (prefer_unifix && !IS_PREFIX(ptr->specifier) && !IS_POSTFIX(ptr->specifier))
-			continue;
-
-		if (specifier) *specifier = ptr->specifier;
-		unsigned n = ptr->priority;
-		sl_done(iter);
-		return n;
-	}
-
-	sl_done(iter);
-
-	if (prefer_unifix)
-		return search_op_internal(m, name, specifier, false, mode);
 
 	return 0;
 }
@@ -2032,44 +1981,24 @@ unsigned search_op(module *m, const char *name, unsigned *specifier, bool prefer
 		return 0;
 	}
 
-	unsigned priority = search_op_internal(m, name, specifier, prefer_unifix, OPS_ALL);
+	// The preferred class across every table before the other, so a prefix
+	// op of the module's own, say, doesn't hide the standard infix one.
 
-	if (priority)
-		return priority;
+	module *user_m = m->pl->user_m;
+	bool inherit = user_m && (m != user_m);
 
-	for (unsigned i = 0; i < m->idx_used; i++) {
-		module *tmp_m = m->used[i];
+	for (unsigned pass = 0; pass < 2; pass++) {
+		bool infix = prefer_unifix ? pass : !pass;
+		unsigned priority;
 
-		if ((m == tmp_m) || !tmp_m->user_ops)
-			continue;
-
-		priority = search_op_internal(tmp_m, name, specifier, prefer_unifix, OPS_EXPORTED);
+		if (!inherit)
+			priority = search_op_internal(m, name, specifier, infix, OPS_ALL);
+		else if (!(priority = search_op_internal(m, name, specifier, infix, OPS_CHANGED))
+			&& !(user_m->user_ops && (priority = search_op_internal(user_m, name, specifier, infix, OPS_CHANGED))))
+			priority = search_op_internal(m, name, specifier, infix, OPS_DEFAULTS);
 
 		if (priority)
 			return priority;
-	}
-
-	module *user_m = m->pl->user_m;
-
-	if (user_m && (m != user_m)) {
-		if (user_m->user_ops) {
-			priority = search_op_internal(user_m, name, specifier, prefer_unifix, OPS_USER);
-
-			if (priority)
-				return priority;
-		}
-
-		for (unsigned i = 0; i < user_m->idx_used; i++) {
-			module *tmp_m = user_m->used[i];
-
-			if ((m == tmp_m) || (user_m == tmp_m) || !tmp_m->user_ops)
-				continue;
-
-			priority = search_op_internal(tmp_m, name, specifier, prefer_unifix, OPS_EXPORTED);
-
-			if (priority)
-				return priority;
-		}
 	}
 
 	if (specifier)
@@ -2174,45 +2103,21 @@ static unsigned match_op_internal(const module *m, const char *name, unsigned *s
 
 unsigned match_op(module *m, const char *name, unsigned *specifier, unsigned arity)
 {
-	unsigned priority = match_op_internal(m, name, specifier, arity, OPS_ALL);
+	module *user_m = m->pl->user_m;
+
+	if (!user_m || (m == user_m))
+		return match_op_internal(m, name, specifier, arity, OPS_ALL);
+
+	unsigned priority = match_op_internal(m, name, specifier, arity, OPS_CHANGED);
+
+	if (!priority && user_m->user_ops)
+		priority = match_op_internal(user_m, name, specifier, arity, OPS_CHANGED);
+
+	if (!priority)
+		priority = match_op_internal(m, name, specifier, arity, OPS_DEFAULTS);
 
 	if (priority)
 		return priority;
-
-	for (unsigned i = 0; i < m->idx_used; i++) {
-		module *tmp_m = m->used[i];
-
-		if ((m == tmp_m) || !tmp_m->user_ops)
-			continue;
-
-		priority = match_op_internal(tmp_m, name, specifier, arity, OPS_EXPORTED);
-
-		if (priority)
-			return priority;
-	}
-
-	module *user_m = m->pl->user_m;
-
-	if (user_m && (m != user_m)) {
-		if (user_m->user_ops) {
-			priority = match_op_internal(user_m, name, specifier, arity, OPS_USER);
-
-			if (priority)
-				return priority;
-		}
-
-		for (unsigned i = 0; i < user_m->idx_used; i++) {
-			module *tmp_m = user_m->used[i];
-
-			if ((m == tmp_m) || (user_m == tmp_m) || !tmp_m->user_ops)
-				continue;
-
-			priority = match_op_internal(tmp_m, name, specifier, arity, OPS_EXPORTED);
-
-			if (priority)
-				return priority;
-		}
-	}
 
 	if (specifier)
 		*specifier = 0;
@@ -2264,45 +2169,21 @@ static unsigned get_op_internal(const module *m, const char *name, unsigned spec
 
 unsigned get_op(module *m, const char *name, unsigned specifier)
 {
-	unsigned priority = get_op_internal(m, name, specifier, OPS_ALL);
+	module *user_m = m->pl->user_m;
+
+	if (!user_m || (m == user_m))
+		return get_op_internal(m, name, specifier, OPS_ALL);
+
+	unsigned priority = get_op_internal(m, name, specifier, OPS_CHANGED);
+
+	if (!priority && user_m->user_ops)
+		priority = get_op_internal(user_m, name, specifier, OPS_CHANGED);
+
+	if (!priority)
+		priority = get_op_internal(m, name, specifier, OPS_DEFAULTS);
 
 	if (priority)
 		return priority;
-
-	for (unsigned i = 0; i < m->idx_used; i++) {
-		module *tmp_m = m->used[i];
-
-		if ((m == tmp_m) || !tmp_m->user_ops)
-			continue;
-
-		priority = get_op_internal(tmp_m, name, specifier, OPS_EXPORTED);
-
-		if (priority)
-			return priority;
-	}
-
-	module *user_m = m->pl->user_m;
-
-	if (user_m && (m != user_m)) {
-		if (user_m->user_ops) {
-			priority = get_op_internal(user_m, name, specifier, OPS_USER);
-
-			if (priority)
-				return priority;
-		}
-
-		for (unsigned i = 0; i < user_m->idx_used; i++) {
-			module *tmp_m = user_m->used[i];
-
-			if ((m == tmp_m) || (user_m == tmp_m) || !tmp_m->user_ops)
-				continue;
-
-			priority = get_op_internal(tmp_m, name, specifier, OPS_EXPORTED);
-
-			if (priority)
-				return priority;
-		}
-	}
 
 	return 0;
 }
@@ -3764,6 +3645,10 @@ bool module_add_use(module *m, module *used)
 	}
 
 	m->used[m->idx_used++] = used;
+
+	if (used != m)
+		import_ops(m, used);
+
 	return true;
 }
 

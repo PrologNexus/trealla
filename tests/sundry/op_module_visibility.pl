@@ -1,7 +1,7 @@
-% A module's operators are its own: an importer sees only those in its
-% export list, and every module sees the user module's own and those
-% exported to it, as in SWI. current_op/3 lists what the calling module
-% sees.
+% A module's operators are its own: an importer gets only those in its
+% export list, even one redefining a standard operator, and every module
+% sees the user module's own and those exported to it, as in SWI.
+% current_op/3 lists what the calling module sees.
 
 :- initialization(main).
 
@@ -23,4 +23,7 @@ main :-
 	( opm1:t1 -> writeln(opm1_parsed_its_own) ; true ),
 	'$create_module'(opm3), opm3:op(0, xfx, =), opm3:op(700, xfx, ~~>),
 	see(opm3, =), see(user, =), see(user, ~~>),
-	parses('x = y').
+	parses('x = y'),
+	% an exported op overrides even a standard one in the importer, as in SWI
+	load_text(":- module(opm4, [op(150, xfy, ^)]).", []),
+	see(user, ^), see(opm1, ^).

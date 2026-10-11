@@ -7552,17 +7552,29 @@ static void append_op(void *ctx, const op_table *ptr)
 	append_list(q, tmp);
 }
 
-// '$current_ops'(-List): op(Priority,Type,Name) for each operator the
-// calling module sees, for current_op/3.
+// '$current_ops'(-List) and '$current_ops'(+Name, -List): op(Priority,
+// Type,Name) for each operator the calling module sees, or just those
+// called Name, for current_op/3.
 
 static bool bif_sys_current_ops_1(query *q)
 {
 	GET_FIRST_ARG(p1,var);
 	CHECKED(init_tmp_heap(q));
-	visit_ops(q->st.m, append_op, q);
+	visit_ops(q->st.m, NULL, append_op, q);
 	cell *l = end_list(q);
 	CHECKED(l);
 	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
+}
+
+static bool bif_sys_current_ops_2(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	GET_NEXT_ARG(p2,var);
+	CHECKED(init_tmp_heap(q));
+	visit_ops(q->st.m, C_STR(q, p1), append_op, q);
+	cell *l = end_list(q);
+	CHECKED(l);
+	return unify(q, p2, p2_ctx, l, q->st.cur_ctx);
 }
 
 builtins g_iso_bifs[] =
@@ -7712,6 +7724,7 @@ builtins g_other_bifs[] =
 	{"$load_properties", 0, bif_sys_load_properties_0, NULL, false, false, BLAH},
 	{"$load_flags", 0, bif_sys_load_flags_0, NULL, false, false, BLAH},
 	{"$current_ops", 1, bif_sys_current_ops_1, "-list", false, false, BLAH},
+	{"$current_ops", 2, bif_sys_current_ops_2, "+atom,-list", false, false, BLAH},
 	{"$list", 1, bif_sys_list_1, "?list", false, false, BLAH},
 	{"$queue", 1, bif_sys_queue_1, "+term", false, false, BLAH},
 	{"$incr", 2, bif_sys_incr_2, "@integer,+integer", false, false, BLAH},

@@ -856,7 +856,9 @@ current_op(A, _, _) :- nonvar(A),
 	\+ (A =< 1200),
 	!, throw(error(domain_error(operator_priority, A), current_op/3)).
 current_op(A, B, C) :-
-	'$current_ops'(Ops),
+	(	atom(C) -> '$current_ops'(C, Ops)	% only that name's
+	;	'$current_ops'(Ops)
+	),
 	member(op(A, B, C), Ops).
 
 %
