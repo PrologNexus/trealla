@@ -2598,11 +2598,17 @@ static bool bif_iso_current_predicate_1(query *q)
 {
 	GET_FIRST_ARG(p_pi,any);
 
-	if (!CMP_STRING_TO_CSTR(q, p_pi, ":")) {
-		module *tmp_m = find_module(q->pl, C_STR(q, p_pi+1));
+	if ((get_arity(p_pi) == 2) && !CMP_STRING_TO_CSTR(q, p_pi, ":")) {
+		cell *cm = deref(q, p_pi+1, p_pi_ctx);
+
+		if (!is_atom(cm))
+			return false;
+
+		module *tmp_m = find_module(q->pl, C_STR(q, cm));
 		if(!tmp_m) return false;
 		q->st.m = tmp_m;
-		p_pi += 2;
+		p_pi = deref(q, p_pi+2, p_pi_ctx);
+		p_pi_ctx = q->latest_ctx;
 	}
 
 	if (is_var(p_pi)) {
@@ -2617,6 +2623,12 @@ static bool bif_iso_current_predicate_1(query *q)
 		if (create_vars(q, 2) < 0)
 			return throw_error(q, p1, p1_ctx, "resource_error", "stack");
 		GET_FIRST_ARG(p_pi,any);
+
+		if ((get_arity(p_pi) == 2) && !CMP_STRING_TO_CSTR(q, p_pi, ":")) {
+			p_pi = deref(q, p_pi+2, p_pi_ctx);
+			p_pi_ctx = q->latest_ctx;
+		}
+
 		bool ok = search_functor(q, p1, p1_ctx, p2, p2_ctx) ? true : false;
 		cell *tmp = alloc_heap(q, 3);
 		make_instr(tmp, g_slash_s, NULL, 2, 2);
@@ -6009,6 +6021,19 @@ static bool bif_sys_predicate_property_2(query *q)
 	}
 
 	predicate *pr = find_predicate(q->st.m, p1);
+
+	// A system predicate written in Prolog is in system or user, and seen
+	// from every module.
+
+	if (!pr) {
+		predicate *pr2 = find_predicate(q->pl->system_m, p1);
+
+		if (!pr2)
+			pr2 = find_predicate(q->pl->user_m, p1);
+
+		if (pr2 && pr2->is_builtin)
+			pr = pr2;
+	}
 
 	if (!pr)
 		return false;
