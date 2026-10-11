@@ -220,6 +220,52 @@ compound_name_arguments(C, N, Args) :-
 		)
 	).
 
+% name/2 and atom_to_term/3 as SWI has them. name/2 makes a number of what
+% reads as one, in Trealla's syntax, though not of text starting with
+% layout, or with a minus and then layout, as SWI doesn't.
+
+:- help(name(?atomic,?list), [iso(false)]).
+:- help(atom_to_term(+atomic,-term,-list), [iso(false)]).
+
+name(X, Cs) :-
+	var(X), !,
+	(	var(Cs) -> throw(error(instantiation_error, name/2)) ; true ),
+	'$text_codes'(Cs, Codes),
+	atom_codes(A, Codes),
+	(	'$name_number'(Codes, N) -> X = N ; X = A ).
+name(X, Cs) :-
+	(	number(X) -> number_codes(X, Codes)
+	;	atom(X) -> atom_codes(X, Codes)
+	;	string(X) -> atom_chars(A, X), atom_codes(A, Codes)
+	;	throw(error(type_error(atomic, X), name/2))
+	),
+	Cs = Codes.
+
+'$text_codes'([C|Cs], Codes) :-
+	atom(C), !,
+	atom_chars(A, [C|Cs]),
+	atom_codes(A, Codes).
+'$text_codes'(Codes, Codes).
+
+'$name_number'([C|Cs], N) :-
+	C > 0' ,
+	\+ (C =:= 0'-, Cs = [D|_], D =< 0' ),
+	catch(number_codes(N, [C|Cs]), error(syntax_error(_), _), fail).
+
+atom_to_term(A, T, Bs) :-
+	(	var(A) -> throw(error(instantiation_error, atom_to_term/3))
+	;	atom(A) -> Text = A
+	;	number(A) -> format(atom(Text), "~w", [A])
+	;	string(A) -> atom_chars(Text, A)
+	;	throw(error(type_error(string, A), atom_to_term/3))
+	),
+	atom_codes(Text, Codes),
+	(	\+ (member(C, Codes), C > 0' ) ->
+		throw(error(syntax_error(end_of_string), atom_to_term/3))
+	;	true
+	),
+	read_term_from_atom(Text, T, [variable_names(Bs)]).
+
 :- help(=@=(+term,+term), [iso(false)]).
 :- help(\=@=(+term,+term), [iso(false)]).
 
