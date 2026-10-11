@@ -3334,7 +3334,6 @@ static bool bif_iso_op_3(query *q)
 	if (is_negative(p1) || is_gt(p1,1200))
 		return throw_error(q, p1, p1_ctx, "domain_error", "operator_priority");
 
-	q->ops_dirty = true;
 	PROLOG_LIST_HANDLER(p3);
 
 	while (is_list(p3)) {
@@ -5907,21 +5906,6 @@ static bool bif_sys_load_flags_0(query *q)
 	return true;
 }
 
-static void load_ops(query *q);
-
-static bool bif_sys_load_ops_0(query *q)
-{
-	load_ops(q);
-	return true;
-}
-
-static bool bif_sys_ops_dirty_0(query *q)
-{
-	bool ok = q->ops_dirty;
-	q->ops_dirty = false;
-	return ok;
-}
-
 static void do_template(char *tmpbuf, const char *name, unsigned arity, const char *help, bool function, bool quote)
 {
 	SB(t);
@@ -7581,95 +7565,6 @@ static bool bif_sys_current_ops_1(query *q)
 	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
 }
 
-static void load_ops(query *q)
-{
-	SB_alloc(pr, 1024*8);
-	sliter *iter = sl_first(q->st.m->ops);
-	op_table *ptr;
-
-	while (sl_next(iter, (void**)&ptr)) {
-		char specifier[80], name[1024];
-
-		if (!ptr->priority || !ptr->specifier)
-			continue;
-
-		if (ptr->specifier == OP_FX)
-			strcpy(specifier, "fx");
-		else if (ptr->specifier == OP_FY)
-			strcpy(specifier, "fy");
-		else if (ptr->specifier == OP_YF)
-			strcpy(specifier, "yf");
-		else if (ptr->specifier == OP_XF)
-			strcpy(specifier, "xf");
-		else if (ptr->specifier == OP_YFX)
-			strcpy(specifier, "yfx");
-		else if (ptr->specifier == OP_XFY)
-			strcpy(specifier, "xfy");
-		else if (ptr->specifier == OP_XFX)
-			strcpy(specifier, "xfx");
-
-		bool quote = needs_quoting(q->st.m, ptr->name, strlen(ptr->name));
-
-		if (quote) {
-			char *dst2 = formatted(ptr->name, strlen(ptr->name), false, false);
-			snprintf(name, sizeof(name), "%s", dst2);
-			TPL_free(dst2);
-		} else
-			snprintf(name, sizeof(name), "%s", ptr->name);
-
-		if (quote) {
-			SB_sprintf(pr, "'$op'( '%s', %s, %u).\n", name, specifier, ptr->priority);
-		} else {
-			SB_sprintf(pr, "'$op'( (%s), %s, %u).\n", name, specifier, ptr->priority);
-		}
-	}
-
-	sl_done(iter);
-	iter = sl_first(q->st.m->defops);
-
-	while (sl_next(iter, (void**)&ptr)) {
-		char specifier[80];
-
-		if (!ptr->specifier)
-			continue;
-
-		if (ptr->specifier == OP_FX)
-			strcpy(specifier, "fx");
-		else if (ptr->specifier == OP_FY)
-			strcpy(specifier, "fy");
-		else if (ptr->specifier == OP_YF)
-			strcpy(specifier, "yf");
-		else if (ptr->specifier == OP_XF)
-			strcpy(specifier, "xf");
-		else if (ptr->specifier == OP_YFX)
-			strcpy(specifier, "yfx");
-		else if (ptr->specifier == OP_XFY)
-			strcpy(specifier, "xfy");
-		else if (ptr->specifier == OP_XFX)
-			strcpy(specifier, "xfx");
-
-
-		char *dst2 = formatted(ptr->name, strlen(ptr->name), false, false);
-		SB_sprintf(pr, "'$op'('%s', %s, %u).\n", dst2, specifier, ptr->priority);
-		TPL_free(dst2);
-	}
-
-	sl_done(iter);
-	parser *p = parser_create(q->pl->user_m);
-
-	if (!p) {
-		SB_free(pr);
-		return;
-	}
-
-	p->srcptr = SB_cstr(pr);
-	p->is_consulting = true;
-	tokenize(p, false, false);
-	parser_destroy(p);
-	//printf("*** %s load_ops %s\n", q->st.m->name, SB_cstr(pr));
-	SB_free(pr);
-}
-
 builtins g_iso_bifs[] =
 {
 	{":", 2, bif_iso_qualify_2, "+atom,:callable", true, false, BLAH},
@@ -7816,9 +7711,7 @@ builtins g_other_bifs[] =
 	{"$is_partial_string", 1, bif_sys_is_partial_string_1, "+string", false, false, BLAH},
 	{"$load_properties", 0, bif_sys_load_properties_0, NULL, false, false, BLAH},
 	{"$load_flags", 0, bif_sys_load_flags_0, NULL, false, false, BLAH},
-	{"$load_ops", 0, bif_sys_load_ops_0, NULL, false, false, BLAH},
 	{"$current_ops", 1, bif_sys_current_ops_1, "-list", false, false, BLAH},
-	{"$ops_dirty", 0, bif_sys_ops_dirty_0, NULL, false, false, BLAH},
 	{"$list", 1, bif_sys_list_1, "?list", false, false, BLAH},
 	{"$queue", 1, bif_sys_queue_1, "+term", false, false, BLAH},
 	{"$incr", 2, bif_sys_incr_2, "@integer,+integer", false, false, BLAH},

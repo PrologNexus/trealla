@@ -3752,7 +3752,6 @@ static query *query_create_(module *m, bool is_toplevel)
 	q->flags = m->flags;
 	q->get_started = wall_time_in_usec();
 	q->cpu_time = q->time_cpu_last_started = q->st.cpu_time = cpu_time_in_usec();
-	q->ops_dirty = true;
 	q->max_depth = m->pl->def_max_depth;
 	q->vgen = 1;
 	q->dump_var_num = -1;
