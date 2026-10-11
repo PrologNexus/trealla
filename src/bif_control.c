@@ -70,27 +70,22 @@ static bool bif_sys_cleanup_if_det_1(query *q)
 	return true;
 }
 
-// A control construct by its functor, not by the builtin flag, which a
-// goal built as data, say by unifying a clause head (A;B), does not carry.
-
-static bool is_control_goal(const cell *c)
-{
-	return is_interned(c) && (get_arity(c) == 2)
-		&& ((c->val_off == g_conjunction_s) || (c->val_off == g_disjunction_s)
-			|| (c->val_off == g_if_then_s) || (c->val_off == g_soft_cut_s));
-}
-
 // Whether a control construct holds a variable where a goal goes, so it
 // has to be run as a body rebuilt with that variable dereferenced. It only
 // walks the term's own cells, without following bindings, so it ends.
 
 static bool control_has_var(const cell *c)
 {
-	if (!is_control_goal(c))
-		return false;
+	while (is_control_pair(c)) {
+		const cell *c1 = c + 1, *c2 = c1 + c1->num_cells;
 
-	const cell *c1 = c + 1, *c2 = c1 + c1->num_cells;
-	return is_var(c1) || is_var(c2) || control_has_var(c1) || control_has_var(c2);
+		if (is_var(c1) || is_var(c2) || control_has_var(c1))
+			return true;
+
+		c = c2;							// the right-hand chain in a loop, as body_cells() has it
+	}
+
+	return false;
 }
 
 bool call_check(query *q, cell *p1, bool *status, bool calln)
@@ -248,10 +243,7 @@ static cell *prepare_checked_call(query *q, cell *clone, cell *p1, pl_ctx p1_ctx
 {
 	cell *tmp;
 
-	if (clone && is_interned(clone) && (get_arity(clone) == 2) && (clone->val_off == p1->val_off)
-		&& (get_arity(p1) == 2)
-		&& ((clone->val_off == g_conjunction_s) || (clone->val_off == g_disjunction_s)
-			|| (clone->val_off == g_if_then_s) || (clone->val_off == g_soft_cut_s))) {
+	if (clone && is_control_pair(clone) && is_control_pair(p1) && (clone->val_off == p1->val_off)) {
 		tmp = prepare_call_body(q, CALL_NOSKIP, clone, p1, p1_ctx, extras);
 		if (tmp) *num_cells = tmp->num_cells;
 	} else if (clone && !get_arity(clone) && !get_arity(p1)) {
@@ -295,7 +287,7 @@ bool bif_iso_call_1(query *q)
 
 	cell *p1_clone = NULL;
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_pair(p1) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
 		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
 		CHECKED(p1_clone);
@@ -353,7 +345,7 @@ static bool bif_iso_once_1(query *q)
 
 	cell *p1_clone = NULL;
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_pair(p1) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
 		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
 		CHECKED(p1_clone);
@@ -390,7 +382,7 @@ static bool bif_ignore_1(query *q)
 
 	cell *p1_clone = NULL;
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_pair(p1) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
 		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
 		CHECKED(p1_clone);
@@ -565,7 +557,7 @@ static bool bif_iso_negation_1(query *q)
 
 	cell *p1_clone = NULL;
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_pair(p1) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
 		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
 		CHECKED(p1_clone);

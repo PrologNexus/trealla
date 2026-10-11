@@ -734,7 +734,10 @@ void make_call_redo(query *q, cell *tmp)
 // arguments are bound to stay the caller's, for nb_setarg/3. The walk
 // follows the clone, which is finite even where the goal is cyclic.
 
-static bool is_control_pair(const cell *c)
+// A control construct by its functor, not by the builtin flag, which a
+// goal built as data, say by unifying a clause head (A;B), does not carry.
+
+bool is_control_pair(const cell *c)
 {
 	return is_interned(c) && (get_arity(c) == 2)
 		&& ((c->val_off == g_conjunction_s) || (c->val_off == g_disjunction_s)
@@ -759,35 +762,50 @@ static void resolve_control(query *q, cell *c)
 	}
 }
 
+// The right-hand chain, as in a long conjunction, is walked in a loop and
+// only a left operand recursed into, so the C stack grows with the left
+// nesting, not with the length of the goal.
+
 static pl_idx body_cells(query *q, cell *cl, cell *o, pl_ctx o_ctx, cell *dst)
 {
-	o = deref(q, o, o_ctx);
-	o_ctx = q->latest_ctx;
+	pl_idx n = 0;
+	unsigned spine = 0;
 
-	if (is_control_pair(cl) && is_control_pair(o) && (o->val_off == cl->val_off)) {
-		cell *cl1 = cl + 1, *cl2 = cl1 + cl1->num_cells;
-		cell *o1 = o + 1, *o2 = o1 + o1->num_cells;
-		pl_idx n = 1;
-		n += body_cells(q, cl1, o1, o_ctx, dst ? dst + n : NULL);
-		n += body_cells(q, cl2, o2, o_ctx, dst ? dst + n : NULL);
+	for (;;) {
+		o = deref(q, o, o_ctx);
+		o_ctx = q->latest_ctx;
+
+		if (!is_control_pair(cl) || !is_control_pair(o) || (o->val_off != cl->val_off))
+			break;
 
 		if (dst) {
-			copy_cells(dst, cl, 1);
-			dst->num_cells = n;
-			resolve_control(q, dst);
+			copy_cells(dst + n, cl, 1);
+			resolve_control(q, dst + n);
 		}
 
-		return n;
+		cell *cl1 = cl + 1, *o1 = o + 1;
+		n++;
+		n += body_cells(q, cl1, o1, o_ctx, dst ? dst + n : NULL);
+		cl = cl1 + cl1->num_cells;
+		o = o1 + o1->num_cells;
+		spine++;
 	}
 
 	if (dst) {
-		dup_cells_by_ref(dst, o, o_ctx, o->num_cells);
+		dup_cells_by_ref(dst + n, o, o_ctx, o->num_cells);
 
-		if (is_interned(dst) && !get_arity(dst) && (dst->val_off == g_cut_s))
-			resolve_control(q, dst);
+		if (is_interned(dst + n) && !get_arity(dst + n) && (dst[n].val_off == g_cut_s))
+			resolve_control(q, dst + n);
 	}
 
-	return o->num_cells;
+	n += o->num_cells;
+
+	// Each header on the chain spans from itself to the end.
+
+	for (pl_idx pos = 0; dst && spine--; pos += 1 + dst[pos+1].num_cells)
+		dst[pos].num_cells = n - pos;
+
+	return n;
 }
 
 cell *prepare_call_body(query *q, bool noskip, cell *clone, cell *p1, pl_ctx p1_ctx, unsigned extras)

@@ -3732,27 +3732,26 @@ void term_to_body(parser *p)
 	p->cl->cells->num_cells = p->cl->cidx - 1;	// Drops TAG_END
 }
 
+// The right-hand chain in a loop, the left recursed into, so a long
+// conjunction doesn't run out of C stack.
+
 cell *check_body_callable(cell *c)
 {
-	if ((get_arity(c) == 2) && (is_xfx(c) || is_xfy(c))) {
-		if ((c->val_off == g_conjunction_s)
-			|| (c->val_off == g_disjunction_s)
-			|| (c->val_off == g_if_then_s)
-			|| (c->val_off == g_soft_cut_s)
-			|| (c->val_off == g_neck_s)) {
-			cell *lhs = c + 1;
-			cell *tmp;
+	while ((get_arity(c) == 2) && (is_xfx(c) || is_xfy(c))) {
+		if ((c->val_off != g_conjunction_s)
+			&& (c->val_off != g_disjunction_s)
+			&& (c->val_off != g_if_then_s)
+			&& (c->val_off != g_soft_cut_s)
+			&& (c->val_off != g_neck_s))
+			return NULL;
 
-			if ((tmp = check_body_callable(lhs)) != NULL)
-				return tmp;
+		cell *lhs = c + 1;
+		cell *tmp;
 
-			cell *rhs = lhs + lhs->num_cells;
+		if ((tmp = check_body_callable(lhs)) != NULL)
+			return tmp;
 
-			if ((tmp = check_body_callable(rhs)) != NULL)
-				return tmp;
-		}
-
-		return NULL;
+		c = lhs + lhs->num_cells;
 	}
 
 	return !is_callable(c) && !is_var(c) ? c : NULL;
