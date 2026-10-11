@@ -30,6 +30,7 @@ predicate *find_functor(module *m, const char *name, unsigned arity);
 predicate *find_predicate(module *m, cell *c);
 predicate *search_predicate(module *m, cell *c);
 predicate *create_predicate(module *m, cell *c, bool *created);
+predicate *thread_local_shadow(predicate *pr);
 bool find_goal_expansion(module *m, cell *c);
 bool find_goal_expansion_specific(module *m, cell *c);
 bool search_goal_expansion(module *m, cell *c);

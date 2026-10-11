@@ -1,0 +1,6 @@
+threads: main([main])/[other]
+database: [2]/2/[]
+property: tl/dyn
+static: permission_error(modify,static_procedure,static_fact/1)
+other_thread_left_nothing: []
+reused_ids: all_started_empty

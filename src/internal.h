@@ -516,6 +516,7 @@ struct predicate_ {
 	bool is_builtin:1;
 	bool is_public:1;
 	bool is_dynamic:1;
+	bool is_thread_local:1;					// thread_local/1: each thread's clauses are in its own shadow
 	bool is_meta_predicate:1;
 	bool is_multifile:1;
 	bool is_discontiguous:1;
@@ -911,6 +912,8 @@ struct thread_ {
 	bool is_joining;						// under guard: a join is waiting, so it can't be detached
 	skiplist *gvars;						// b_setval/nb_setval, this thread's own
 	uint64_t gvar_seq;
+	predicate **tl_shadows;					// this thread's shadows of thread_local/1 predicates
+	unsigned tl_shadows_n, tl_shadows_cap;
 	volatile int timedout;   // set by SIGALRM handler s_sigfn(); thread-lived
 	bool is_init:1;
 	bool is_finished:1;

@@ -79,6 +79,8 @@ extern pl_atomic int g_tpl_count;
 extern thread *find_thread_by_id(prolog *pl, int chan);
 extern void threads_destroy(prolog *pl);
 extern thread *get_self_query(const query *q);
+extern thread *current_thread(prolog *pl);
+extern void thread_local_release(thread *t);
 
 extern void keyfree(const void *key, const void *val, const void *p);
 

@@ -332,6 +332,59 @@ predicate *search_predicate(module *m, cell *c)
 	return NULL;
 }
 
+// The current thread's own predicate behind a thread_local/1 one: dynamic,
+// named for the thread and the original, made on first use. Its clauses
+// keep the original head, so they match the goal as it is.
+
+predicate *thread_local_shadow(predicate *pr)
+{
+	if (!pr->is_thread_local)
+		return pr;
+
+	module *m = pr->m;
+	thread *t = current_thread(m->pl);
+	char name[1024];
+	snprintf(name, sizeof(name), "$tl:%u:%s", (unsigned)t->chan, C_STR(m, &pr->key));
+	cell key = (cell){0};
+	key.tag = TAG_INTERNED;
+	key.val_off = new_atom(m->pl, name);
+
+	if (key.val_off == ERR_IDX)
+		return NULL;
+
+	set_arity(&key, get_arity(&pr->key));
+	prolog_lock_mod(m->pl, m);
+	predicate *sh = find_predicate(m, &key);
+
+	if (!sh && (sh = create_predicate(m, &key, NULL)) != NULL)
+		sh->is_dynamic = true;
+
+	bool known = false;
+
+	for (unsigned i = 0; sh && (i < t->tl_shadows_n) && !known; i++)
+		known = t->tl_shadows[i] == sh;
+
+	if (sh && !known) {
+		if (t->tl_shadows_n == t->tl_shadows_cap) {
+			unsigned cap = t->tl_shadows_cap ? t->tl_shadows_cap * 2 : 8;
+			predicate **a = TPL_realloc(t->tl_shadows, sizeof(predicate*) * cap);
+
+			if (!a) {
+				prolog_unlock_mod(m->pl, m);
+				return NULL;
+			}
+
+			t->tl_shadows = a;
+			t->tl_shadows_cap = cap;
+		}
+
+		t->tl_shadows[t->tl_shadows_n++] = sh;
+	}
+
+	prolog_unlock_mod(m->pl, m);
+	return sh;
+}
+
 predicate *create_predicate(module *m, cell *c, bool *created)
 {
 	if (created) *created = false;
@@ -2441,6 +2494,9 @@ static rule *assert_begin(module *m, unsigned num_vars, cell *p1, bool consultin
 		convert_to_literal(m, c);
 
 	predicate *pr = find_predicate(m, c);
+
+	if (pr && pr->is_thread_local && !(pr = thread_local_shadow(pr)))
+		return NULL;
 
 	if (pr && !consulting && !pr->is_dynamic)
 		return NULL;

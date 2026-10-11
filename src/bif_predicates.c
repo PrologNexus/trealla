@@ -6024,6 +6024,13 @@ static bool bif_sys_predicate_property_2(query *q)
 			return true;
 	}
 
+	if (pr->is_thread_local) {
+		make_atom(&tmp, new_atom(q->pl, "thread_local"));
+
+		if (unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
+			return true;
+	}
+
 	if (pr->is_multifile) {
 		make_atom(&tmp, new_atom(q->pl, "multifile"));
 

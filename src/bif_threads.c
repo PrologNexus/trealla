@@ -154,6 +154,39 @@ static thread *main_thread(prolog *pl)
 // The same q->thread_ptr-or-threads[0] idiom is used in query.h,
 // toplevel.c, bif_os.c and bif_tabling.c; this just names it.
 
+// The Prolog thread this OS thread runs, for code with no query to ask,
+// such as assert_begin() resolving a thread_local/1 predicate.
+
+static _Thread_local thread *g_self_thread;
+
+thread *current_thread(prolog *pl)
+{
+	return g_self_thread ? g_self_thread : pl->main_thread;
+}
+
+// A thread's shadows of thread_local/1 predicates keep their names, for
+// the next thread to get the same id, but lose their clauses with it.
+
+void thread_local_release(thread *t)
+{
+	for (unsigned i = 0; i < t->tl_shadows_n; i++) {
+		predicate *pr = t->tl_shadows[i];
+		module *m = pr->m;
+		prolog_lock_mod(m->pl, m);
+
+		for (rule *r = pr->head; r; r = r->next) {
+			if (!r->dbgen_retracted)
+				retract_from_db(m, r);
+		}
+
+		prolog_unlock_mod(m->pl, m);
+	}
+
+	TPL_free(t->tl_shadows);
+	t->tl_shadows = NULL;
+	t->tl_shadows_n = t->tl_shadows_cap = 0;
+}
+
 thread *get_self_query(const query *q)
 {
 	return q->thread_ptr ? q->thread_ptr : main_thread(q->pl);
@@ -1057,6 +1090,7 @@ static void drop_leftover_choices(query *q)
 static void *start_routine_thread_create(thread *t)
 {
 	t->id = pthread_self();
+	g_self_thread = t;
 	execute(t->q, t->goal, t->num_vars);
 	drop_leftover_choices(t->q);
 	unshare_cells(t->goal, t->goal->num_cells);
@@ -1112,6 +1146,7 @@ static void *start_routine_thread_create(thread *t)
 	t->alias = NULL;
 	query_destroy(t->q);
 	gvars_destroy(t);
+	thread_local_release(t);
 	t->q = NULL;
 	msg *m;
 
@@ -1336,6 +1371,7 @@ static bool bif_thread_create_3(query *q)
 		if (t->at_exit_goal) { unshare_cells(t->at_exit_goal, t->at_exit_goal->num_cells); TPL_free(t->at_exit_goal); t->at_exit_goal = NULL; }
 		query_destroy(t->q);
 		gvars_destroy(t);
+		thread_local_release(t);
 		t->q = NULL;
 		retire_thread(q->pl, t);
 		return throw_error(q, p1, p1_ctx, "system_error", "pthread_create");
@@ -1442,6 +1478,7 @@ static bool bif_thread_join_2(query *q)
 	t->alias = NULL;
 	query_destroy(t->q);
 	gvars_destroy(t);
+	thread_local_release(t);
 	t->q = NULL;
 	msg *m;
 
@@ -1559,6 +1596,8 @@ static void retire_cancelled_thread(thread *t)
 	query_destroy(t->q);
 
 	gvars_destroy(t);
+
+	thread_local_release(t);
 	t->q = NULL;
 	//t->id = 0;
 

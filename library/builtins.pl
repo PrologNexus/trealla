@@ -181,7 +181,7 @@ predicate_property(P, A) :-
 	; 	(Controls = [
 			built_in,choice_construct,
 			discontiguous,private,static,
-			dynamic,foreign,multifile,
+			dynamic,foreign,multifile,thread_local,
 			meta_predicate(_),imported_from(_),template(_),
 			iso,visible,tabled
 			],

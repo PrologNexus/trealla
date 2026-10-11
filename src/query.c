@@ -2856,7 +2856,8 @@ static predicate *find_db_predicate(query *q, module *m, cell *c)
 		if (is_cstring(c))
 			convert_to_literal(m, c);
 
-		return search_predicate(m, c);
+		pr = search_predicate(m, c);
+		return pr ? thread_local_shadow(pr) : NULL;
 	}
 
 	if (is_interned(c))
@@ -2874,7 +2875,7 @@ static predicate *find_db_predicate(query *q, module *m, cell *c)
 			c->match = pr;
 	}
 
-	return pr;
+	return pr ? thread_local_shadow(pr) : NULL;
 }
 
 // Match HEAD :- BODY.
@@ -3124,6 +3125,9 @@ bool match_head(query *q)
 			c->val_off = pr->alias->key.val_off;
 			pr = pr->alias;
 		}
+
+		if (pr->is_thread_local && !(pr = thread_local_shadow(pr)))
+			return throw_error(q, c, c_ctx, "resource_error", "memory");
 
 		// A predicate that exists in the module but has no clauses and is
 		// neither dynamic nor multifile (e.g. a static predicate left empty

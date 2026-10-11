@@ -313,6 +313,105 @@ static bool rule_head_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, 
 	return true;
 }
 
+// thread_local(+Spec), the directive and the predicate: Name/Arity, a list
+// or conjunction of them, or M:Spec. Each becomes dynamic, with the clauses
+// each thread asserts kept to itself (see thread_local_shadow()).
+
+static bool do_thread_local(query *q, cell *c, pl_ctx c_ctx, module *m)
+{
+	c = deref(q, c, c_ctx);
+	c_ctx = q->latest_ctx;
+
+	if (is_var(c))
+		return throw_error(q, c, c_ctx, "instantiation_error", "predicate_indicator");
+
+	if (is_iso_list(c)) {
+		cell *h = c + 1, *t = h + h->num_cells;
+		return do_thread_local(q, h, c_ctx, m) && do_thread_local(q, t, c_ctx, m);
+	}
+
+	if (is_nil(c))
+		return true;
+
+	if (is_interned(c) && (get_arity(c) == 2) && (c->val_off == g_conjunction_s)) {
+		cell *h = c + 1, *t = h + h->num_cells;
+		return do_thread_local(q, h, c_ctx, m) && do_thread_local(q, t, c_ctx, m);
+	}
+
+	if (is_interned(c) && (get_arity(c) == 2) && (c->val_off == g_colon_s)) {
+		cell *cm = deref(q, c + 1, c_ctx);
+
+		if (!is_atom(cm))
+			return throw_error(q, cm, q->latest_ctx, "type_error", "module");
+
+		module *m2 = find_module(q->pl, C_STR(q, cm));
+
+		if (!m2 && !(m2 = module_create(q->pl, C_STR(q, cm))))
+			return throw_error(q, cm, q->latest_ctx, "resource_error", "memory");
+
+		cell *spec = c + 1;
+		spec += spec->num_cells;
+		return do_thread_local(q, spec, c_ctx, m2);
+	}
+
+	if (!is_interned(c) || (get_arity(c) != 2) || CMP_STRING_TO_CSTR(q, c, "/"))
+		return throw_error(q, c, c_ctx, "type_error", "predicate_indicator");
+
+	cell *name = deref(q, c + 1, c_ctx);
+	pl_ctx name_ctx = q->latest_ctx;
+	cell *arity = c + 1;
+	arity += arity->num_cells;
+	arity = deref(q, arity, c_ctx);
+	pl_ctx arity_ctx = q->latest_ctx;
+
+	if (is_var(name) || is_var(arity))
+		return throw_error(q, c, c_ctx, "instantiation_error", "predicate_indicator");
+
+	if (!is_atom(name))
+		return throw_error(q, name, name_ctx, "type_error", "atom");
+
+	if (!is_smallint(arity))
+		return throw_error(q, arity, arity_ctx, "type_error", "integer");
+
+	if (get_smallint(arity) < 0)
+		return throw_error(q, arity, arity_ctx, "domain_error", "not_less_than_zero");
+
+	const char *src = C_STR(q, name);
+	unsigned n = (unsigned)get_smallint(arity);
+	cell key = (cell){0};
+	key.tag = TAG_INTERNED;
+	key.val_off = new_atom(q->pl, src);
+	set_arity(&key, n);
+	prolog_lock_mod(q->pl, m);
+	predicate *pr = find_predicate(m, &key);
+
+	if (pr && !pr->is_dynamic && pr->head) {
+		prolog_unlock_mod(q->pl, m);
+		cell pi[3];										// Name/Arity, as abolish/1 reports it
+		make_instr(pi, g_slash_s, NULL, 2, 2);
+		make_atom(pi+1, key.val_off);
+		make_int(pi+2, n);
+		return throw_error(q, pi, q->st.cur_ctx, "permission_error", "modify,static_procedure");
+	}
+
+	set_dynamic_in_db(m, src, n);
+	pr = find_predicate(m, &key);
+
+	if (pr && !pr->is_thread_local) {
+		pr->is_thread_local = true;
+		push_property(m, src, n, "thread_local");
+	}
+
+	prolog_unlock_mod(q->pl, m);
+	return pr ? true : throw_error(q, c, c_ctx, "resource_error", "memory");
+}
+
+static bool bif_thread_local_1(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	return do_thread_local(q, p1, p1_ctx, q->st.m);
+}
+
 static bool bif_iso_retract_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
@@ -344,6 +443,9 @@ static bool bif_iso_retractall_1(query *q)
 	module *lm = m ? m : q->st.m;
 	cell *head = deref(q, get_head(p1), p1_ctx);
 	predicate *pr = search_predicate(lm, head);
+
+	if (pr && pr->is_thread_local)
+		pr = thread_local_shadow(pr);
 
 	if (!pr) {
 		bool found = false;
@@ -1325,6 +1427,7 @@ static bool bif_sys_dlisting_1(query *q)
 builtins g_database_bifs[] =
 {
 	{"abolish", 1, bif_iso_abolish_1, "+predicate_indicator", true, false, BLAH},
+	{"thread_local", 1, bif_thread_local_1, "+term", false, false, BLAH},
 	{"asserta", 1, bif_iso_asserta_1, "+term", true, false, BLAH},
 	{"assertz", 1, bif_iso_assertz_1, "+term", true, false, BLAH},
 	{"retract", 1, bif_iso_retract_1, "+term", true, false, BLAH},
