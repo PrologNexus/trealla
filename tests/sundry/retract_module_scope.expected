@@ -1,0 +1,5 @@
+clause(1,true)
+not_retracted
+user_foo_kept
+rms_baz_retracted
+user_retract_ok

@@ -2876,9 +2876,12 @@ static inline bool match_in_view(const query *q, const predicate *pr)
 
 // The predicate clause/retract act on. An explicit module, from M:Head,
 // is looked up every time: M may be bound at run time, so the head cell's
-// cached match could belong to another module.
+// cached match could belong to another module. Reading it, clause/2 sees
+// what M inherits from user, as in SWI; changing it, retract/1 doesn't
+// reach past M, as in SWI and Scryer, so retract(m:foo) never takes a
+// clause of user's foo.
 
-static predicate *find_db_predicate(query *q, module *m, cell *c)
+static predicate *find_db_predicate(query *q, module *m, cell *c, bool inherit)
 {
 	predicate *pr = NULL;
 
@@ -2886,7 +2889,7 @@ static predicate *find_db_predicate(query *q, module *m, cell *c)
 		if (is_cstring(c))
 			convert_to_literal(m, c);
 
-		pr = search_predicate(m, c);
+		pr = inherit ? search_predicate(m, c) : find_predicate(m, c);
 		return pr ? thread_local_shadow(pr) : NULL;
 	}
 
@@ -2915,7 +2918,7 @@ bool match_rule(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type i
 	if (!q->retry) {
 		cell *c = deref(q, get_head(p1), p1_ctx);
 		pl_ctx c_ctx = q->latest_ctx;
-		predicate *pr = find_db_predicate(q, m, c);
+		predicate *pr = find_db_predicate(q, m, c, false);
 
 		if (!pr) {
 			bool found = false;
@@ -3015,7 +3018,7 @@ bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body,
 	if (!q->retry) {
 		cell *c = p1;
 		pl_ctx c_ctx = p1_ctx;
-		predicate *pr = find_db_predicate(q, m, c);
+		predicate *pr = find_db_predicate(q, m, c, (is_retract == DO_CLAUSE) || (is_retract == DO_CLAUSE_STATIC));
 
 		if (!pr) {
 			bool found = false;

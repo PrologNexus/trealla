@@ -551,7 +551,7 @@ static bool bif_iso_retractall_1(query *q)
 
 	module *lm = m ? m : q->st.m;
 	cell *head = deref(q, get_head(p1), p1_ctx);
-	predicate *pr = search_predicate(lm, head);
+	predicate *pr = m ? find_predicate(m, head) : search_predicate(lm, head);	// see find_db_predicate()
 
 	if (pr && pr->is_thread_local)
 		pr = thread_local_shadow(pr);
