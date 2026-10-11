@@ -128,8 +128,10 @@ static bool bif_clause_3(query *q)
 			return true;
 		}
 
-		if (!is_var(p3))
+		if (!is_var(p3)) {
+			drop_choice(q);
 			break;
+		}
 
 		q->retry = QUERY_RETRY;
 		q->total_backtracks++;
