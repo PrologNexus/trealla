@@ -3469,9 +3469,7 @@ static void expand_meta_predicate(parser *p, predicate *pr, cell *goal)
 	for (cell *k = goal+1, *m = pr->meta_args+1; arity--; k += k->num_cells, m += m->num_cells) {
 		cell tmpbuf[2];
 
-		if (is_interned(k) && ((k->val_off == g_call_s) || (k->val_off == g_once_s) || (k->val_off == g_ignore_s)))
-			continue;
-		else if ((get_arity(k) == 2) && (k->val_off == g_colon_s) && (is_atom(FIRST_ARG(k)) || is_var(FIRST_ARG(k))))
+		if ((get_arity(k) == 2) && (k->val_off == g_colon_s) && (is_atom(FIRST_ARG(k)) || is_var(FIRST_ARG(k))))
 			continue;		// a variable module is left to the call, by when it's bound
 		else if (!is_interned(k) || is_iso_list(k))
 			continue;

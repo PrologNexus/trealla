@@ -218,8 +218,8 @@ safe_goal(_) :-
 safe_goal(G) :-
 	throw(error(instantiation_error, sandbox(G, []))).
 
-% A meta argument arrives unqualified when it is call/N, once/1 or ignore/1,
-% which then stands for a goal in user.
+% An unqualified goal, as when called with no meta-predicate qualification,
+% stands for one in user.
 
 qualified(G0, M:G) :-
 	strip_module(G0, M0, G),
