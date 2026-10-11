@@ -242,6 +242,10 @@ read_from_chars(Cs, T) :-
 
 :- help(read_from_chars(+chars,?term), [iso(false)]).
 
+% Qualified with the caller's module, as in SWI, for a module's own view.
+
+:- meta_predicate(predicate_property(:, ?)).
+
 predicate_property(P, A) :-
 	nonvar(P), atom(A), \+ '$derived_property'(A), A \== iso, !,
 	must_be(P, callable, predicate_property/2, _),
@@ -273,7 +277,10 @@ predicate_property(P, A) :-
 	;	'$recorded_property'(P, A)
 	).
 
+'$recorded_property'(system:P, A) :- !,
+	'$recorded_property'(user:P, A).	% system has no operators to read them with
 '$recorded_property'(M:P, A) :- !,
+	M:'$load_properties',			% each module has its own, made on first use
 	functor(P, N, Ar), M:'$predicate_property'(N/Ar, predicate, A).
 '$recorded_property'(P, A) :-
 	functor(P, N, Ar), '$predicate_property'(N/Ar, predicate, A).
