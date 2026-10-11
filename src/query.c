@@ -734,7 +734,10 @@ void make_call_redo(query *q, cell *tmp)
 // arguments are bound to stay the caller's, for nb_setarg/3. The walk
 // follows the clone, which is finite even where the goal is cyclic.
 
-static bool is_control_pair(const cell *c)
+// A control construct by its functor, not by the builtin flag, which a
+// goal built as data, say by unifying a clause head (A;B), does not carry.
+
+bool is_control_pair(const cell *c)
 {
 	return is_interned(c) && (get_arity(c) == 2)
 		&& ((c->val_off == g_conjunction_s) || (c->val_off == g_disjunction_s)
@@ -759,35 +762,50 @@ static void resolve_control(query *q, cell *c)
 	}
 }
 
+// The right-hand chain, as in a long conjunction, is walked in a loop and
+// only a left operand recursed into, so the C stack grows with the left
+// nesting, not with the length of the goal.
+
 static pl_idx body_cells(query *q, cell *cl, cell *o, pl_ctx o_ctx, cell *dst)
 {
-	o = deref(q, o, o_ctx);
-	o_ctx = q->latest_ctx;
+	pl_idx n = 0;
+	unsigned spine = 0;
 
-	if (is_control_pair(cl) && is_control_pair(o) && (o->val_off == cl->val_off)) {
-		cell *cl1 = cl + 1, *cl2 = cl1 + cl1->num_cells;
-		cell *o1 = o + 1, *o2 = o1 + o1->num_cells;
-		pl_idx n = 1;
-		n += body_cells(q, cl1, o1, o_ctx, dst ? dst + n : NULL);
-		n += body_cells(q, cl2, o2, o_ctx, dst ? dst + n : NULL);
+	for (;;) {
+		o = deref(q, o, o_ctx);
+		o_ctx = q->latest_ctx;
+
+		if (!is_control_pair(cl) || !is_control_pair(o) || (o->val_off != cl->val_off))
+			break;
 
 		if (dst) {
-			copy_cells(dst, cl, 1);
-			dst->num_cells = n;
-			resolve_control(q, dst);
+			copy_cells(dst + n, cl, 1);
+			resolve_control(q, dst + n);
 		}
 
-		return n;
+		cell *cl1 = cl + 1, *o1 = o + 1;
+		n++;
+		n += body_cells(q, cl1, o1, o_ctx, dst ? dst + n : NULL);
+		cl = cl1 + cl1->num_cells;
+		o = o1 + o1->num_cells;
+		spine++;
 	}
 
 	if (dst) {
-		dup_cells_by_ref(dst, o, o_ctx, o->num_cells);
+		dup_cells_by_ref(dst + n, o, o_ctx, o->num_cells);
 
-		if (is_interned(dst) && !get_arity(dst) && (dst->val_off == g_cut_s))
-			resolve_control(q, dst);
+		if (is_interned(dst + n) && !get_arity(dst + n) && (dst[n].val_off == g_cut_s))
+			resolve_control(q, dst + n);
 	}
 
-	return o->num_cells;
+	n += o->num_cells;
+
+	// Each header on the chain spans from itself to the end.
+
+	for (pl_idx pos = 0; dst && spine--; pos += 1 + dst[pos+1].num_cells)
+		dst[pos].num_cells = n - pos;
+
+	return n;
 }
 
 cell *prepare_call_body(query *q, bool noskip, cell *clone, cell *p1, pl_ctx p1_ctx, unsigned extras)
@@ -2843,11 +2861,27 @@ static bool find_key(query *q, predicate *pr, cell *key, pl_ctx key_ctx)
 	return true;
 }
 
+// A predicate cached from a module destroy_module/1 emptied may since have
+// been revived in a module that took its place (see
+// module_bury_predicates()), so a revived one is only good when its module
+// is the one running. Others are left alone: library code runs in its
+// caller's module and relies on what it cached from its own. pr->m is only
+// compared, never followed: a builtin's cell holds its bif here, which the
+// caller searches past anyway.
+
+static inline bool match_in_view(const query *q, const predicate *pr)
+{
+	return !pr->is_revived || (pr->m == q->st.m);
+}
+
 // The predicate clause/retract act on. An explicit module, from M:Head,
 // is looked up every time: M may be bound at run time, so the head cell's
-// cached match could belong to another module.
+// cached match could belong to another module. Reading it, clause/2 sees
+// what M inherits from user, as in SWI; changing it, retract/1 doesn't
+// reach past M, as in SWI and Scryer, so retract(m:foo) never takes a
+// clause of user's foo.
 
-static predicate *find_db_predicate(query *q, module *m, cell *c)
+static predicate *find_db_predicate(query *q, module *m, cell *c, bool inherit)
 {
 	predicate *pr = NULL;
 
@@ -2855,7 +2889,7 @@ static predicate *find_db_predicate(query *q, module *m, cell *c)
 		if (is_cstring(c))
 			convert_to_literal(m, c);
 
-		pr = search_predicate(m, c);
+		pr = inherit ? search_predicate(m, c) : find_predicate(m, c);
 		return pr ? thread_local_shadow(pr) : NULL;
 	}
 
@@ -2864,7 +2898,7 @@ static predicate *find_db_predicate(query *q, module *m, cell *c)
 	else if (is_cstring(c))
 		convert_to_literal(q->st.m, c);
 
-	if (pr && pr->is_abolished)
+	if (pr && (pr->is_abolished || !match_in_view(q, pr)))
 		pr = search_predicate(q->st.m, c);
 
 	if (!pr || is_evaluable(c) || is_builtin(c)) {
@@ -2884,7 +2918,7 @@ bool match_rule(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type i
 	if (!q->retry) {
 		cell *c = deref(q, get_head(p1), p1_ctx);
 		pl_ctx c_ctx = q->latest_ctx;
-		predicate *pr = find_db_predicate(q, m, c);
+		predicate *pr = find_db_predicate(q, m, c, false);
 
 		if (!pr) {
 			bool found = false;
@@ -2984,7 +3018,7 @@ bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body,
 	if (!q->retry) {
 		cell *c = p1;
 		pl_ctx c_ctx = p1_ctx;
-		predicate *pr = find_db_predicate(q, m, c);
+		predicate *pr = find_db_predicate(q, m, c, (is_retract == DO_CLAUSE) || (is_retract == DO_CLAUSE_STATIC));
 
 		if (!pr) {
 			bool found = false;
@@ -3096,7 +3130,7 @@ bool match_head(query *q)
 			convert_to_literal(q->st.m, c);
 		}
 
-		if (pr && pr->is_abolished)
+		if (pr && (pr->is_abolished || !match_in_view(q, pr)))
 			pr = search_predicate(q->st.m, c);
 
 		if (!pr || is_evaluable(c) || is_builtin(c)) {

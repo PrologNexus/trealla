@@ -1,0 +1,10 @@
+type_error(module,42)
+type_error(module,42)
+type_error(module,f(x))
+type_error(module,42)
+type_error(module,42)
+type_error(module,f(x))
+type_error(module,42)
+instantiation_error
+findall(?,0,-)
+assertz(:)

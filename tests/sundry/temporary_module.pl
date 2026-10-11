@@ -10,6 +10,11 @@ stale :-
 	catch(G, error(E, _), true),
 	writeq(E), nl.
 
+% Names tm5 directly, so its call caches tm5's p/1, which a later module
+% reusing tm5's struct revives: that one mustn't be what this calls.
+
+named :- tm5:p(X), writeq(named(X)), nl.
+
 main :-
 	in_temporary_module(M, assertz(p(1)), (p(X), writeq(X), nl)),
 	( current_module(M) -> writeln(still) ; writeln(gone) ),
@@ -30,4 +35,12 @@ main :-
 	use_module(library(lists)),
 	catch(destroy_module(lists), error(E4, _), true), writeq(E4), nl,
 	destroy_module(no_such_module),
+	% one already in use, if only by a declaration, isn't taken and destroyed
+	'$create_module'(tmapp), load_text(":- dynamic(store/1).", [module(tmapp)]),
+	catch(in_temporary_module(tmapp, true, true), error(E5, _), true), writeq(E5), nl,
+	( predicate_property(tmapp:store(_), dynamic) -> writeln(tmapp_kept) ; writeln(tmapp_lost) ),
+	% destroyed modules are reused, as many times as asked
+	forall(between(1, 3000, I), in_temporary_module(_, assertz(r(I)), r(I))),
+	in_temporary_module(tm5, assertz(p(old)), named),
+	in_temporary_module(tm6, assertz(p(new)), (catch(named, error(E6, _), true), writeq(E6), nl, tm6:p(Y6), writeq(tm6(Y6)), nl)),
 	writeln(done).

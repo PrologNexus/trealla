@@ -60,3 +60,13 @@ forall(member(A,[true,shell(ls)]),call(A))-permission_error(call,sandboxed,shell
 (A=[B]>>shell(B),maplist(A,[ls]))-permission_error(call,sandboxed,shell(C))
 call(A)-instantiation_error
 safe_call(shell,ls)-permission_error(call,sandboxed,shell(A))
+(true,sandbox:assertz(safe_meta(shell(A),B,[])))-permission_error(call,sandboxed,sandbox:assertz(safe_meta(shell(C),D,[])))
+(true,lists:assertz(injected(1)))-permission_error(call,sandboxed,lists:assertz(injected(1)))
+(true,lists:findall(A,member(A,[a]),B))-permission_error(call,sandboxed,lists:findall(C,member(C,[a]),D))
+(true,sbpriv:pub(A))-safe
+(true,sbpriv:hidden(A))-permission_error(call,sandboxed,sbpriv:hidden(B))
+(true,sandbox:safe_call(sbpriv:hidden(A)))-permission_error(call,sandboxed,sbpriv:hidden(B))
+assertz(term_expansion(a,b))-permission_error(call,sandboxed,assertz(A))
+(A=sbpriv:hidden(B),call(A))-permission_error(call,sandboxed,sbpriv:hidden(C))
+(sbpriv:pub(secret)=sbpriv:pub(secret),call(sbpriv:pub(secret)),secret==secret)-yes
+(sandbox:assertz(safe_global_variable(gv)))-permission_error(modify,static_procedure,safe_global_variable(gv))

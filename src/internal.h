@@ -521,6 +521,7 @@ struct predicate_ {
 	bool is_multifile:1;
 	bool is_discontiguous:1;
 	bool is_abolished:1;
+	bool is_revived:1;						// buried by destroy_module/1, then taken again: see match_in_view()
 	bool is_noindex:1;
 	bool needs_index:1;
 	bool no_idx3:1;						// a clause has a variable in a key argument
@@ -594,6 +595,7 @@ typedef struct {
 	unsigned specifier;
 	unsigned priority;
 	bool exported;						// in its module's export list, so seen by importers
+	bool changed;						// a standard operator op/3 has redefined, or removed, here
 } op_table;
 
 // Where *ctx* is the context of the var
@@ -911,9 +913,12 @@ struct thread_ {
 	int chan, locked_by;
 	pl_atomic bool is_active;
 	bool is_joining;						// under guard: a join is waiting, so it can't be detached
+	pl_atomic bool cancel_requested;		// thread_cancel/1: a blocking wait gives up and the thread exits
+	pl_atomic bool alerted;					// thread_signal/2 or thread_cancel/1 sent: a blocking read retries after it
+	bool alertable;							// under guard: its OS thread runs, so pthread_kill() can reach it
 	skiplist *gvars;						// b_setval/nb_setval, this thread's own
 	uint64_t gvar_seq;
-	predicate **tl_shadows;					// this thread's shadows of thread_local/1 predicates
+	predicate **tl_shadows, **tl_origs;		// this thread's shadows of thread_local/1 predicates, and theirs
 	unsigned tl_shadows_n, tl_shadows_cap;
 	volatile int timedout;   // set by SIGALRM handler s_sigfn(); thread-lived
 	bool is_init:1;
@@ -1270,6 +1275,7 @@ struct module_ {
 	skiplist *props;					// which name/arity have $predicate_property clauses
 	loaded_file *loaded_files;
 	list predicates;
+	list buried;						// predicates abolished by destroy_module/1, see module_bury_predicates()
 	prolog_flags flags;
 	unsigned id, idx_used, arity;
 	int if_depth;
@@ -1306,7 +1312,7 @@ struct prolog_ {
 	unsigned modmap_alloc;
 	list modules;
 	module *system_m, *user_m, *m, *dcgs;
-	module *dead_modules;				// emptied by destroy_module/1, kept for stale pointers, freed at exit
+	module *dead_modules;				// emptied by destroy_module/1, for module_create() to take again
 	parser *p;
 	skiplist *biftab, *help, *fortab, *alias;
 	skiplist *flagtab;					// flag/3 values, keyed by flag_key()

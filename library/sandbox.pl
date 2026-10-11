@@ -64,11 +64,7 @@
 	safe_directive/1,				% Module:Goal
 	safe_prolog_flag/2.				% Name, Value
 
-:- dynamic
-	safe_meta_predicate/1,
-	safe_meta/3,
-	safe_global_variable/1,
-	safe_directive/1.
+% Not dynamic, as in SWI: an asserted clause could whitelist anything.
 
 % After the declarations, as library(yall) adds to safe_meta_predicate/1.
 
@@ -119,15 +115,25 @@ safe_call(G, A1, A2, A3, A4, A5, A6, A7) :- safe_closure(G, [A1,A2,A3,A4,A5,A6,A
 
 safe_closure(G0, Extra) :-
 	qualified(G0, M:G1),
-	(	var(G1) -> instantiation_error(G1)
-	;	true
-	),
-	(	lambda_goal(G1, Extra, G) -> true
-	;	G1 =.. L0,
-		append(L0, Extra, L),
-		G =.. L
-	),
+	closure_goal(G1, Extra, G),
 	safe_call(M:G).
+
+% The goal a closure makes with Extra added, inside any qualification.
+
+closure_goal(G, _, _) :-
+	var(G),
+	!,
+	instantiation_error(G).
+closure_goal(M:G0, Extra, M:G) :-
+	!,
+	closure_goal(G0, Extra, G).
+closure_goal(G0, Extra, G) :-
+	lambda_goal(G0, Extra, G),
+	!.
+closure_goal(G0, Extra, G) :-
+	G0 =.. L0,
+	append(L0, Extra, L),
+	G =.. L.
 
 % safe_guard(:Goal, -Guarded): Goal with each goal position that is still
 % a variable, which safe_goal/1 can't check, put through safe_call/N to
@@ -203,6 +209,7 @@ guard_existential(G, M, G1) :-
 
 safe_goal(Goal0) :-
 	qualified(Goal0, M:Goal),
+	nb_setval(sandbox_root, M),
 	empty_assoc(Safe0),
 	catch(safe(Goal, M, [], Safe0, _), E, true),
 	!,
@@ -218,12 +225,14 @@ safe_goal(_) :-
 safe_goal(G) :-
 	throw(error(instantiation_error, sandbox(G, []))).
 
-% An unqualified goal, as when called with no meta-predicate qualification,
-% stands for one in user.
+% The outermost qualification only: one inside, as in user:(priv:G), is a
+% call into that module, which the check must see as one. An unqualified
+% goal, as when called with no meta-predicate qualification, is in user.
 
-qualified(G0, M:G) :-
-	strip_module(G0, M0, G),
-	( atom(M0) -> M = M0 ; M = user ).
+qualified(M:G, M:G) :-
+	atom(M),
+	!.
+qualified(G, user:G).
 
 % safe(+Goal, +Module, +Parents, +Safe0, -Safe) is semidet.
 
@@ -233,10 +242,35 @@ safe(V, _, Parents, _, _) :-
 	Error = error(instantiation_error, sandbox(V, Parents)),
 	nb_setval(sandbox_last_error, Error),
 	throw(Error).
-safe(M:G, _, Parents, Safe0, Safe) :-
+safe(M:G, Ctx, Parents, Safe0, Safe) :-
 	!,
 	must_be(atom, M),
 	must_be(callable, G),
+	safe_qualified(M, G, Ctx, Parents, Safe0, Safe).
+
+% A qualification inside another is the one that counts, and a control
+% construct passes its qualification to the goals in it.
+
+safe_qualified(_, M2:G, Ctx, Parents, Safe0, Safe) :-
+	!,
+	safe(M2:G, Ctx, Parents, Safe0, Safe).
+safe_qualified(M, G, Ctx, Parents, Safe0, Safe) :-
+	qualified_control(G, Gs),
+	!,
+	safe_qualified_list(Gs, M, Ctx, Parents, Safe0, Safe).
+safe_qualified(M, G, Ctx, Parents, Safe0, Safe) :-
+	safe_call_goal(G),
+	home_module(M, G, sandbox),
+	!,
+	safe_call_called(G, Ctx, Parents, Called),
+	safe_list(Called, Ctx, Parents, Safe0, Safe).
+safe_qualified(M, G, Ctx, Parents, _, _) :-
+	M \== Ctx,
+	system_predicate(M, G),
+	module_sensitive(M, G),
+	!,
+	throw(error(permission_error(call, sandboxed, M:G), sandbox(M:G, Parents))).
+safe_qualified(M, G, _, Parents, Safe0, Safe) :-
 	known_module(M:G, Parents),
 	home_module(M, G, M2),
 	(	(	safe_primitive(M2:G)
@@ -303,6 +337,57 @@ unsafe(_Parents, Ctx) :-
 	Ctx = sandbox(_,_),
 	nb_setval(sandbox_last_error, error(instantiation_error, Ctx)),
 	fail.
+
+safe_qualified_list([], _, _, _, Safe, Safe).
+safe_qualified_list([G|Gs], M, Ctx, Parents, Safe0, Safe) :-
+	safe(M:G, Ctx, Parents, Safe0, Safe1),
+	safe_qualified_list(Gs, M, Ctx, Parents, Safe1, Safe).
+
+qualified_control((A,B), [A,B]).
+qualified_control((A;B), [A,B]).
+qualified_control((A->B), [A,B]).
+qualified_control((A*->B), [A,B]).
+qualified_control(\+(A), [A]).
+qualified_control(call(A), [A]).
+
+% A system predicate whose meaning depends on the module it's called in, as
+% assert, clause and findall do: one called as M:G from outside M acts on M.
+
+module_sensitive(_, G) :-
+	predicate_property(G, meta_predicate(Spec)),	% a system predicate's is the same everywhere
+	Spec =.. [_|Args],
+	member(A, Args),
+	( integer(A) ; A == (:) ; A == (^) ; A == (//) ),
+	!.
+
+% safe_call/N checks its goal when called, so it's safe without knowing it
+% now, but only in the module the checked code runs in, or the one it is
+% walking: as M:G, which is how safe_guard/2 writes it, G then checked in
+% M, whatever it's bound to. Another module's goal has to be known now.
+
+safe_call_goal(G) :-
+	compound(G),
+	functor(G, safe_call, A),
+	A >= 1, A =< 8.
+
+safe_call_called(G, Ctx, Parents, Called) :-
+	G =.. [_, C|Extra],
+	length(Extra, N),
+	(	var(C) ->
+		throw(error(instantiation_error, sandbox(sandbox:G, Parents)))
+	;	C = Q:_, atom(Q), ( Q == Ctx ; nb_current(sandbox_root, Q) ) ->
+		Called = []
+	;	C = Q:X, ( var(Q) ; \+ ground_goal_name(X) ) ->
+		throw(error(permission_error(call, sandboxed, sandbox:G), sandbox(sandbox:G, Parents)))
+	;	extend(N, C, Goal),
+		Called = [Goal]
+	).
+
+% A goal whose predicate is known now, through any qualifications.
+
+ground_goal_name(G) :- var(G), !, fail.
+ground_goal_name(M:G) :- !, atom(M), ground_goal_name(G).
+ground_goal_name(G) :- callable(G).
 
 rethrow_instantiation_error(Parents) :-
 	throw(error(instantiation_error, sandbox(_, Parents))).
@@ -699,15 +784,6 @@ safe_primitive(nb_setval(Var,_)) :-
 safe_primitive(nb_current(_,_)).
 										% output
 safe_primitive(writeln(_)).
-										% checked when called
-safe_primitive(sandbox:safe_call(_)).
-safe_primitive(sandbox:safe_call(_,_)).
-safe_primitive(sandbox:safe_call(_,_,_)).
-safe_primitive(sandbox:safe_call(_,_,_,_)).
-safe_primitive(sandbox:safe_call(_,_,_,_,_)).
-safe_primitive(sandbox:safe_call(_,_,_,_,_,_)).
-safe_primitive(sandbox:safe_call(_,_,_,_,_,_,_)).
-safe_primitive(sandbox:safe_call(_,_,_,_,_,_,_,_)).
 
 % safe_assert(+Term) is semidet: asserting a fact in the current module.
 
@@ -715,6 +791,7 @@ safe_assert(C) :- cyclic_term(C), !, fail.
 safe_assert(X) :- var(X), !, fail.
 safe_assert((_Head:-_Body)) :- !, fail.
 safe_assert(_:_) :- !, fail.
+safe_assert(H) :- expansion_hook(H), !, fail.
 safe_assert(_).
 
 % safe_clause(+Head) is semidet: clause/2 that doesn't cross a module
@@ -758,6 +835,10 @@ safe_meta(freeze:freeze(_Var, Goal), [Goal]).
 safe_meta(when:when(_Cond, Goal), [Goal]).
 safe_meta(_:Lambda, [Goal]) :-
 	lambda_goal(Lambda, Goal).
+safe_meta(sandbox:G, Ctx, Called) :-
+	safe_call_goal(G),
+	safe_call_called(G, Ctx, [], Called).
+
 safe_meta(phrase(NT, Xs0, Xs), [Goal]) :-
 	expand_nt(NT, Xs0, Xs, Goal).
 safe_meta(phrase(NT, Xs0), [Goal]) :-
@@ -1208,9 +1289,6 @@ load_clause((H0 :- B0), M, B) :-
 	!,
 	clause_head(H0, M, H),
 	guard(B0, M, B),
-	(	expansion_hook(H) -> safe_goal(M:B)
-	;	true
-	),
 	assertz(M:(H :- B)).
 load_clause(H0, M, true) :-
 	clause_head(H0, M, H),
@@ -1235,6 +1313,11 @@ clause_head(H, M, _) :-
 	!,
 	functor(H, N, A),
 	permission_error(modify, static_procedure, N/A).
+clause_head(H, _, _) :-
+	expansion_hook(H),
+	!,
+	functor(H, N, A),
+	permission_error(modify, sandboxed_procedure, N/A).
 clause_head(H, _, H).
 
 clause_pi((H :- _), PI) :- !, clause_pi(H, PI).
@@ -1245,8 +1328,8 @@ clause_pi(H, H).
 permission_error(Action, Type, Culprit) :-
 	throw(error(permission_error(Action, Type, Culprit), _)).
 
-% An expansion hook runs as code is loaded, so its body must be safe before
-% any of it is.
+% An expansion hook rewrites code as it's loaded, and what it makes, not its
+% body, decides what then runs, so sandboxed code may not define one.
 
 expansion_hook(term_expansion(_, _)).
 expansion_hook(goal_expansion(_, _)).

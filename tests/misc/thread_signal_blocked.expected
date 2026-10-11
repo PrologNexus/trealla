@@ -1,0 +1,10 @@
+pipe_read_thrown: exception(stop)
+signal_ran
+read foo
+joined(true)
+at_exit_ran
+pipe_read_cancelled: gone
+signal_ran_in_accept
+accepted
+joined(true)
+accept_thrown: exception(stop)

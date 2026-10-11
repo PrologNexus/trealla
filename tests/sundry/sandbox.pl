@@ -97,7 +97,19 @@ main :-
 	\+ \+ r((G = [X]>>(X > 0), maplist(G, [1]))),
 	\+ \+ r((G = [X]>>shell(X), maplist(G, [ls]))),
 	\+ \+ r(call(_)),
-	\+ \+ r(safe_call(shell, ls)).
+	\+ \+ r(safe_call(shell, ls)),
+	% no way out through another module's state or private predicates
+	load_text(":- module(sbpriv, [pub/1]). pub(X) :- hidden(X). hidden(secret).", []),
+	t((true, sandbox:assertz(safe_meta(shell(_), _, [])))),
+	t((true, lists:assertz(injected(1)))),
+	t((true, lists:findall(X2, member(X2, [a]), _))),
+	t((true, sbpriv:pub(_))),
+	t((true, sbpriv:hidden(_))),
+	t((true, sandbox:safe_call(sbpriv:hidden(_)))),
+	t(assertz(term_expansion(a, b))),
+	\+ \+ r((G = sbpriv:hidden(_), call(G))),
+	\+ \+ r((G = sbpriv:pub(V), call(G), V == secret)),
+	\+ \+ r(sandbox:assertz(safe_global_variable(gv))).
 
 g(G) :-
 	safe_guard(G, R),

@@ -220,6 +220,52 @@ compound_name_arguments(C, N, Args) :-
 		)
 	).
 
+% name/2 and atom_to_term/3 as SWI has them. name/2 makes a number of what
+% reads as one, in Trealla's syntax, though not of text starting with
+% layout, or with a minus and then layout, as SWI doesn't.
+
+:- help(name(?atomic,?list), [iso(false)]).
+:- help(atom_to_term(+atomic,-term,-list), [iso(false)]).
+
+name(X, Cs) :-
+	var(X), !,
+	(	var(Cs) -> throw(error(instantiation_error, name/2)) ; true ),
+	'$text_codes'(Cs, Codes),
+	atom_codes(A, Codes),
+	(	'$name_number'(Codes, N) -> X = N ; X = A ).
+name(X, Cs) :-
+	(	number(X) -> number_codes(X, Codes)
+	;	atom(X) -> atom_codes(X, Codes)
+	;	string(X) -> atom_chars(A, X), atom_codes(A, Codes)
+	;	throw(error(type_error(atomic, X), name/2))
+	),
+	Cs = Codes.
+
+'$text_codes'([C|Cs], Codes) :-
+	atom(C), !,
+	atom_chars(A, [C|Cs]),
+	atom_codes(A, Codes).
+'$text_codes'(Codes, Codes).
+
+'$name_number'([C|Cs], N) :-
+	C > 0' ,
+	\+ (C =:= 0'-, Cs = [D|_], D =< 0' ),
+	catch(number_codes(N, [C|Cs]), error(syntax_error(_), _), fail).
+
+atom_to_term(A, T, Bs) :-
+	(	var(A) -> throw(error(instantiation_error, atom_to_term/3))
+	;	atom(A) -> Text = A
+	;	number(A) -> format(atom(Text), "~w", [A])
+	;	string(A) -> atom_chars(Text, A)
+	;	throw(error(type_error(string, A), atom_to_term/3))
+	),
+	atom_codes(Text, Codes),
+	(	\+ (member(C, Codes), C > 0' ) ->
+		throw(error(syntax_error(end_of_string), atom_to_term/3))
+	;	true
+	),
+	read_term_from_atom(Text, T, [variable_names(Bs)]).
+
 :- help(=@=(+term,+term), [iso(false)]).
 :- help(\=@=(+term,+term), [iso(false)]).
 
@@ -241,6 +287,10 @@ read_from_chars(Cs, T) :-
     read_term_from_chars(Cs, T, []).
 
 :- help(read_from_chars(+chars,?term), [iso(false)]).
+
+% Qualified with the caller's module, as in SWI, for a module's own view.
+
+:- meta_predicate(predicate_property(:, ?)).
 
 predicate_property(P, A) :-
 	nonvar(P), atom(A), \+ '$derived_property'(A), A \== iso, !,
@@ -273,7 +323,10 @@ predicate_property(P, A) :-
 	;	'$recorded_property'(P, A)
 	).
 
+'$recorded_property'(system:P, A) :- !,
+	'$recorded_property'(user:P, A).	% system has no operators to read them with
 '$recorded_property'(M:P, A) :- !,
+	M:'$load_properties',			% each module has its own, made on first use
 	functor(P, N, Ar), M:'$predicate_property'(N/Ar, predicate, A).
 '$recorded_property'(P, A) :-
 	functor(P, N, Ar), '$predicate_property'(N/Ar, predicate, A).
@@ -849,7 +902,9 @@ current_op(A, _, _) :- nonvar(A),
 	\+ (A =< 1200),
 	!, throw(error(domain_error(operator_priority, A), current_op/3)).
 current_op(A, B, C) :-
-	'$current_ops'(Ops),
+	(	atom(C) -> '$current_ops'(C, Ops)	% only that name's
+	;	'$current_ops'(Ops)
+	),
 	member(op(A, B, C), Ops).
 
 %

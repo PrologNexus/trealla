@@ -716,7 +716,7 @@ static bool tpl_wait_fd(query *q, int fd, bool for_write)
 	SOCKET sock = (SOCKET)fd;
 
 	for (;;) {
-		if (interrupt_pending(q)) {
+		if (interrupt_pending(q) || cancel_pending(q) || alert_pending(q)) {
 			errno = EINTR;
 			return false;
 		}
@@ -753,7 +753,7 @@ static bool tpl_wait_fd(query *q, int fd, bool for_write)
 		return true;
 
 	for (;;) {
-		if (interrupt_pending(q)) {
+		if (interrupt_pending(q) || cancel_pending(q) || alert_pending(q)) {
 			errno = EINTR;
 			return false;
 		}
@@ -766,6 +766,9 @@ static bool tpl_wait_fd(query *q, int fd, bool for_write)
 
 		struct pollfd pfd = { .fd = fd, .events = for_write ? POLLOUT : POLLIN };
 		int n = poll(&pfd, 1, wait_ms);
+
+		if ((n < 0) && (errno == EINTR))
+			continue;		// a signal: round again, where an alert or interrupt is seen
 
 		if (n != 0)
 			return true;	// ready, or poll() itself errored - let the real call report it

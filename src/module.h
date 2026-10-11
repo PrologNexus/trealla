@@ -27,13 +27,14 @@ unsigned match_op(module *m, const char *name, unsigned *specifier, unsigned ari
 unsigned get_op(module *m, const char *name, unsigned specifier);
 bool set_op(module *m, const char *name, unsigned specifier, unsigned priority);
 void export_op(module *m, const char *name, unsigned specifier);
-void visit_ops(module *m, void (*fn)(void*, const op_table*), void *ctx);
+void visit_ops(module *m, const char *name, void (*fn)(void*, const op_table*), void *ctx);
 predicate *find_functor(module *m, const char *name, unsigned arity);
 predicate *find_predicate(module *m, cell *c);
 predicate *search_predicate(module *m, cell *c);
 predicate *create_predicate(module *m, cell *c, bool *created);
 predicate *thread_local_shadow(predicate *pr);
 void module_clear_tables(module *m);
+void module_bury_predicates(module *m);
 bool find_goal_expansion(module *m, cell *c);
 bool find_goal_expansion_specific(module *m, cell *c);
 bool search_goal_expansion(module *m, cell *c);

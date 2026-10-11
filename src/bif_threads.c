@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sched.h>
+#include <signal.h>
 
 #include "module.h"
 #include "query.h"
@@ -159,6 +160,55 @@ static thread *main_thread(prolog *pl)
 
 static _Thread_local thread *g_self_thread;
 
+// The interrupted goal again, once the engine has run the thread_signal/2
+// that interrupted it: as SWI does, a signal that throws abandons the
+// read or wait it came in, and one that doesn't lets it carry on.
+
+bool retry_after_signal(query *q)
+{
+	cell *goal = q->st.instr;
+	cell *tmp = prepare_call(q, CALL_NOSKIP, goal, q->st.cur_ctx, 1);
+	CHECKED(tmp);
+	make_call(q, tmp+goal->num_cells);
+	q->st.instr = tmp;
+	return true;
+}
+
+// A wait thread_cancel/1 interrupted ends the thread there, as the
+// thread_exit(cancelled) it was sent does when it is next between goals.
+
+bool thread_exit_cancelled(query *q)
+{
+	thread *t = q->thread_ptr;
+	cell *tmp = TPL_calloc(2, sizeof(cell));
+	CHECKED(tmp);
+	make_instr(tmp, new_atom(q->pl, "exited"), NULL, 1, 1);
+	make_atom(tmp+1, new_atom(q->pl, "cancelled"));
+
+	if (t->exit_code) {
+		unshare_cells(t->exit_code, t->exit_code->num_cells);
+		TPL_free(t->exit_code);
+	}
+
+	t->exit_code = tmp;
+
+	// The thread_exit(cancelled) still queued is done with: left there, it
+	// would end the at_exit goal before that ran a goal.
+
+	acquire_lock(&t->guard);
+	msg *m;
+
+	while ((m = list_pop_front(&t->signals)) != NULL) {
+		unshare_cells(m->c, m->c->num_cells);
+		TPL_free(m);
+	}
+
+	release_lock(&t->guard);
+	q->halt_code = 0;
+	q->halt = q->error = true;
+	return true;
+}
+
 thread *current_thread(prolog *pl)
 {
 	return g_self_thread ? g_self_thread : pl->main_thread;
@@ -183,7 +233,8 @@ void thread_local_release(thread *t)
 	}
 
 	TPL_free(t->tl_shadows);
-	t->tl_shadows = NULL;
+	TPL_free(t->tl_origs);
+	t->tl_shadows = t->tl_origs = NULL;
 	t->tl_shadows_n = t->tl_shadows_cap = 0;
 }
 
@@ -440,6 +491,16 @@ static int new_thread(prolog *pl)
 #endif
 	t->is_detached = false;
 	t->is_joining = false;
+	t->cancel_requested = false;
+
+	if (t->exit_code) {						// a detached thread's, never joined
+		unshare_cells(t->exit_code, t->exit_code->num_cells);
+		TPL_free(t->exit_code);
+		t->exit_code = NULL;
+	}
+
+	t->alerted = false;
+	t->alertable = false;
 	gvars_destroy(t);					// a recycled struct starts with none
 	t->gvar_seq = 0;
 	t->is_queue_only = false;
@@ -490,6 +551,7 @@ void thread_initialize(prolog *pl)
 	thread *t = find_thread_by_id(pl, n);
 	ENSURE(t);
 	pl->main_thread = t;
+	t->alertable = true;					// it runs as long as pl does
 	t->alias = TPL_strdup("main");
 	sl_app(pl->alias, t->alias, t);
 	t->is_detached = true;
@@ -661,6 +723,46 @@ static void resume_thread(thread *t)
 	pthread_mutex_lock(&t->mutex);
 	pthread_cond_broadcast(&t->cond);
 	pthread_mutex_unlock(&t->mutex);
+}
+
+// As SWI does: a thread blocked in a read gets SIGUSR2, whose handler does
+// nothing and is installed without SA_RESTART, so the read comes back
+// EINTR and the signal can run (see throw_timeout()). Sent under the guard
+// while its OS thread still runs, which it stops saying under the same
+// guard before it exits, so it never reaches a thread that's gone. A wait
+// on a condition is woken as before, a polled one sees alerted.
+
+#if !defined(_WIN32) && !defined(__wasi__)
+static void alert_handler(int sig)
+{
+	(void) sig;
+}
+
+static void install_alert_handler(void)
+{
+	struct sigaction sa = {0};
+	sa.sa_handler = alert_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGUSR2, &sa, NULL);
+}
+#endif
+
+static void alert_thread(thread *t)
+{
+	t->alerted = true;
+	resume_thread(t);
+
+#if !defined(_WIN32) && !defined(__wasi__)
+	static pthread_once_t once = PTHREAD_ONCE_INIT;
+	pthread_once(&once, install_alert_handler);
+	acquire_lock(&t->guard);
+
+	if (t->alertable && !pthread_equal((pthread_t)t->id, pthread_self()))
+		pthread_kill((pthread_t)t->id, SIGUSR2);
+
+	release_lock(&t->guard);
+#endif
 }
 
 static unsigned queue_size(prolog *pl, unsigned chan)
@@ -1091,6 +1193,9 @@ static void *start_routine_thread_create(thread *t)
 {
 	t->id = pthread_self();
 	g_self_thread = t;
+	acquire_lock(&t->guard);
+	t->alertable = true;					// see alert_thread()
+	release_lock(&t->guard);
 	execute(t->q, t->goal, t->num_vars);
 	drop_leftover_choices(t->q);
 	unshare_cells(t->goal, t->goal->num_cells);
@@ -1136,6 +1241,9 @@ static void *start_routine_thread_create(thread *t)
 	// thread can reach its tables.
 
 	tabling_destroy_thread(t);
+	acquire_lock(&t->guard);
+	t->alertable = false;					// no signal reaches it from here
+	release_lock(&t->guard);
 
 	if (!t->is_detached)
 		return 0;
@@ -1164,6 +1272,15 @@ static void *start_routine_thread_create(thread *t)
 		unshare_cells(t->ball, t->ball->num_cells);
 		TPL_free(t->ball);
 		t->ball = NULL;
+	}
+
+	// No join will take it, and the next thread to get this struct must
+	// not report it as its own.
+
+	if (t->exit_code) {
+		unshare_cells(t->exit_code, t->exit_code->num_cells);
+		TPL_free(t->exit_code);
+		t->exit_code = NULL;
 	}
 
 	// Unlock before retiring: retire_thread() puts t on the free list,
@@ -1522,6 +1639,10 @@ bool do_signal(query *q, void *thread_ptr)
 	}
 
 	msg *m = list_pop_front(&t->signals);
+
+	if (!list_count(&t->signals))
+		t->alerted = false;					// every signal sent has run, or is running
+
 	release_lock(&t->guard);
 	THREAD_DEBUG DUMP_TERM("do_signal", m->c, q->st.cur_ctx, 0);
 	cell *c = import_term(q, m->c, q->st.cur_ctx);
@@ -1561,7 +1682,7 @@ static bool bif_thread_signal_2(query *q)
 		return false;
 	}
 
-	resume_thread(t);
+	alert_thread(t);
 	return true;
 }
 
@@ -1591,6 +1712,12 @@ static void retire_cancelled_thread(thread *t)
 		unshare_cells(t->ball, t->ball->num_cells);
 		TPL_free(t->ball);
 		t->ball = NULL;
+	}
+
+	if (t->exit_code) {
+		unshare_cells(t->exit_code, t->exit_code->num_cells);
+		TPL_free(t->exit_code);
+		t->exit_code = NULL;
 	}
 
 	query_destroy(t->q);
@@ -1689,11 +1816,12 @@ static bool bif_thread_cancel_1(query *q)
 	}
 
 	release_lock(&t->guard);
+	t->cancel_requested = true;			// for a thread blocked in a read or accept, see tpl_wait_fd()
 	cell goal[2];
 	make_instr(goal, new_atom(q->pl, "thread_exit"), bif_thread_exit_1, 1, 1);
 	make_atom(goal+1, new_atom(q->pl, "cancelled"));
 	CHECKED(queue_to_chan(t, goal, q->my_chan, true));
-	resume_thread(t);
+	alert_thread(t);
 	THREAD_DEBUG DUMP_TERM(" -  ", q->st.instr, q->st.cur_ctx, 1);
 	return true;
 }

@@ -2571,6 +2571,13 @@ static bool search_functor(query *q, cell *p1, pl_ctx p1_ctx, cell *p2, pl_ctx p
 		if (pr->is_abolished || pr->is_builtin)
 			continue;
 
+		// Every module declares these hooks, so as in SWI they don't
+		// count until they have clauses.
+
+		if (!pr->cnt && (get_arity(&pr->key) == 2)
+			&& (!strcmp(src, "term_expansion") || !strcmp(src, "goal_expansion")))
+			continue;
+
 		cell tmpn, tmpa;
 		make_atom(&tmpn, pr->key.val_off);
 		make_int(&tmpa, get_arity(&pr->key));
@@ -4296,7 +4303,7 @@ static bool bif_load_text_2(query *q)
 				m = find_module(q->pl, name_s);
 
 				if (!m) {
-					if (q->top->is_command)
+					if (q->top->is_command && !q->run_init)
 						fprintf(stdout, "Info: created module '%s'\n", name_s);
 
 					m = module_create(q->pl, name_s);
@@ -7411,6 +7418,21 @@ static void load_properties(module *m)
 		format_template(m, tmpbuf, sizeof(tmpbuf), ptr->name, ptr->arity, ptr, ptr->evaluable?true:false, true); SB_strcat(pr, tmpbuf);
 	}
 
+	// Tables that register their builtins elsewhere: their properties only.
+
+	const builtins *more[] = { g_format_bifs, g_dcgs_bifs, g_tabling_bifs };
+
+	for (unsigned i = 0; i < sizeof(more)/sizeof(more[0]); i++) {
+		for (const builtins *ptr = more[i]; ptr->name; ptr++) {
+			if (ptr->name[0] == '$') continue;
+			format_property(m, tmpbuf, sizeof(tmpbuf), ptr->name, ptr->arity, "built_in", ptr->evaluable?true:false); SB_strcat(pr, tmpbuf);
+			format_property(m, tmpbuf, sizeof(tmpbuf), ptr->name, ptr->arity, "static", ptr->evaluable?true:false); SB_strcat(pr, tmpbuf);
+			if (ptr->iso) { format_property(m, tmpbuf, sizeof(tmpbuf), ptr->name, ptr->arity, "iso", ptr->evaluable?true:false); SB_strcat(pr, tmpbuf); }
+			format_template(m, tmpbuf, sizeof(tmpbuf), ptr->name, ptr->arity, ptr, ptr->evaluable?true:false, false); SB_strcat(pr, tmpbuf);
+			format_template(m, tmpbuf, sizeof(tmpbuf), ptr->name, ptr->arity, ptr, ptr->evaluable?true:false, true); SB_strcat(pr, tmpbuf);
+		}
+	}
+
 	for (const builtins *ptr = g_sregex_bifs; ptr->name; ptr++) {
 		sl_app(m->pl->biftab, (void*)(size_t)new_atom(m->pl, ptr->name), ptr);
 		if (ptr->name[0] == '$') continue;
@@ -7552,17 +7574,29 @@ static void append_op(void *ctx, const op_table *ptr)
 	append_list(q, tmp);
 }
 
-// '$current_ops'(-List): op(Priority,Type,Name) for each operator the
-// calling module sees, for current_op/3.
+// '$current_ops'(-List) and '$current_ops'(+Name, -List): op(Priority,
+// Type,Name) for each operator the calling module sees, or just those
+// called Name, for current_op/3.
 
 static bool bif_sys_current_ops_1(query *q)
 {
 	GET_FIRST_ARG(p1,var);
 	CHECKED(init_tmp_heap(q));
-	visit_ops(q->st.m, append_op, q);
+	visit_ops(q->st.m, NULL, append_op, q);
 	cell *l = end_list(q);
 	CHECKED(l);
 	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
+}
+
+static bool bif_sys_current_ops_2(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	GET_NEXT_ARG(p2,var);
+	CHECKED(init_tmp_heap(q));
+	visit_ops(q->st.m, C_STR(q, p1), append_op, q);
+	cell *l = end_list(q);
+	CHECKED(l);
+	return unify(q, p2, p2_ctx, l, q->st.cur_ctx);
 }
 
 builtins g_iso_bifs[] =
@@ -7712,6 +7746,7 @@ builtins g_other_bifs[] =
 	{"$load_properties", 0, bif_sys_load_properties_0, NULL, false, false, BLAH},
 	{"$load_flags", 0, bif_sys_load_flags_0, NULL, false, false, BLAH},
 	{"$current_ops", 1, bif_sys_current_ops_1, "-list", false, false, BLAH},
+	{"$current_ops", 2, bif_sys_current_ops_2, "+atom,-list", false, false, BLAH},
 	{"$list", 1, bif_sys_list_1, "?list", false, false, BLAH},
 	{"$queue", 1, bif_sys_queue_1, "+term", false, false, BLAH},
 	{"$incr", 2, bif_sys_incr_2, "@integer,+integer", false, false, BLAH},
