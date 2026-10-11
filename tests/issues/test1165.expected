@@ -1,0 +1,4 @@
+error(permission_error(access,private_procedure,atom_length/2),listing/1)
+error(permission_error(access,private_procedure,write/1),listing/1)
+error(permission_error(access,private_procedure,atom_length/2),'$xlisting'/1)
+error(permission_error(access,private_procedure,atom_length/2),'$dlisting'/1)
