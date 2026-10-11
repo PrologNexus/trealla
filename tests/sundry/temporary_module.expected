@@ -1,0 +1,12 @@
+1
+gone
+existence_error(procedure,p/1)
+[3]
+syntax_error(operator_expected)
+oops
+gone
+[a,b]
+gone
+permission_error(destroy,module,user)
+permission_error(destroy,module,lists)
+done

@@ -1259,6 +1259,7 @@ struct module_ {
 	module **used;
 	unsigned used_alloc;
 	module *orig;
+	module *dead_next;					// on pl->dead_modules once destroy_module/1 has emptied it
 	prolog *pl;
 	lock guard;							// serializes this module's own predicate mutation; see prolog_lock_mod()
 	pi *gex_head, *gex_tail;			// goal expansion ??? (see pi_ above, why not use list?)
@@ -1282,6 +1283,7 @@ struct module_ {
 	bool quad_recorded:1;				// at least one answer description seen for quad_query
 	bool user_ops:1;
 	bool prebuilt:1;
+	bool from_file:1;					// made by a module/2 directive
 	bool make_public:1;
 	bool loaded_properties:1;
 	bool loading:1;
@@ -1304,6 +1306,7 @@ struct prolog_ {
 	unsigned modmap_alloc;
 	list modules;
 	module *system_m, *user_m, *m, *dcgs;
+	module *dead_modules;				// emptied by destroy_module/1, kept for stale pointers, freed at exit
 	parser *p;
 	skiplist *biftab, *help, *fortab, *alias;
 	skiplist *flagtab;					// flag/3 values, keyed by flag_key()

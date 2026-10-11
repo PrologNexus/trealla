@@ -1641,6 +1641,7 @@ static bool directive_term(parser *p, cell *c)
 		}
 
 		tmp_m = module_create(p->pl, name);
+		if (tmp_m) tmp_m->from_file = true;
 		if (!tmp_m) {
 			if (!p->do_read_term)
 				fprintf(stderr, "Error: module creation failed: %s, %s:%d\n", name, get_loaded(p->m, p->m->filename), p->line_num);
@@ -1731,6 +1732,7 @@ static bool directive_term(parser *p, cell *c)
 			}
 
 			tmp_m = module_create(p->pl, name);
+			if (tmp_m) tmp_m->from_file = true;
 
 			if (!tmp_m) {
 				if (!p->do_read_term)

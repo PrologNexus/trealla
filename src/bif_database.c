@@ -12,6 +12,8 @@
 // A module that doesn't exist has no clauses, so as in SWI and Scryer the
 // call just gives if_missing.
 
+static void abolish_predicate(query *q, predicate *pr, bool hard);
+
 static bool module_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, bool *status, bool if_missing)
 {
 	*mp = NULL;
@@ -313,6 +315,77 @@ static bool rule_head_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, 
 	return true;
 }
 
+// '$destroy_module'(+Name): emptied rather than freed. Code can hold a
+// cached pointer to one of its predicates, or a frame or a return point
+// its module, so the module and its predicate headers stay, abolished, on
+// pl->dead_modules till exit. Its clauses, indexes, operators, blackboard
+// and imports go, and so does its name, for a new module to take.
+
+static bool bif_sys_destroy_module_1(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	module *m = find_module(q->pl, C_STR(q, p1));
+
+	if (!m)
+		return true;
+
+	if ((m == q->pl->user_m) || (m == q->pl->system_m) || m->prebuilt || m->orig || m->from_file)
+		return throw_error(q, p1, p1_ctx, "permission_error", "destroy,module");
+
+	prolog_lock_mod(q->pl, m);
+
+	for (predicate *pr = list_front(&m->predicates); pr; pr = list_next(pr)) {
+		if (pr->head || pr->cnt)
+			abolish_predicate(q, pr, true);
+		else
+			pr->is_abolished = true;
+	}
+
+	module_clear_tables(m);
+	m->idx_used = 0;
+	prolog_unlock_mod(q->pl, m);
+
+	prolog_lock(q->pl);
+
+	for (module *tmp = list_front(&q->pl->modules); tmp; tmp = list_next(tmp)) {
+		unsigned j = 0;
+
+		for (unsigned i = 0; i < tmp->idx_used; i++) {
+			if (tmp->used[i] != m)
+				tmp->used[j++] = tmp->used[i];
+		}
+
+		tmp->idx_used = j;
+	}
+
+	list_remove(&q->pl->modules, m);
+	m->hdr.prev = m->hdr.next = NULL;
+	m->dead_next = q->pl->dead_modules;
+	q->pl->dead_modules = m;
+	prolog_unlock(q->pl);
+	return true;
+}
+
+// '$create_module'(+Name): an empty module, for in_temporary_module/3.
+
+static bool bif_sys_create_module_1(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	module *m = find_module(q->pl, C_STR(q, p1));
+
+	if (m) {
+		for (predicate *pr = list_front(&m->predicates); pr; pr = list_next(pr)) {
+			if (pr->head && strcmp(C_STR(q, &pr->key), "$predicate_property"))
+				return throw_error(q, p1, p1_ctx, "permission_error", "create,module");
+		}
+
+		return true;
+	}
+
+	CHECKED(module_create(q->pl, C_STR(q, p1)));
+	return true;
+}
+
 // thread_local(+Spec), the directive and the predicate: Name/Arity, a list
 // or conjunction of them, or M:Spec. Each becomes dynamic, with the clauses
 // each thread asserts kept to itself (see thread_local_shadow()).
@@ -477,14 +550,11 @@ static bool bif_iso_retractall_1(query *q)
 	return true;
 }
 
-bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
+// Every clause of pr retracted and reclaimed, its index freed, and with
+// hard, pr marked abolished, which a stale cached pointer to it can see.
+
+static void abolish_predicate(query *q, predicate *pr, bool hard)
 {
-	predicate *pr = search_predicate(q->st.m, c_pi);
-	if (!pr) return true;
-
-	if (!pr->is_dynamic)
-		return throw_error(q, c_orig, q->st.cur_ctx, "permission_error", "modify,static_procedure");
-
 	for (rule *r = pr->head; r; r = r->next)
 		retract_from_db(r->owner->m, r);
 
@@ -515,6 +585,17 @@ bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
 	if (hard)
 		pr->is_abolished = true;
 
+}
+
+bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
+{
+	predicate *pr = search_predicate(q->st.m, c_pi);
+	if (!pr) return true;
+
+	if (!pr->is_dynamic)
+		return throw_error(q, c_orig, q->st.cur_ctx, "permission_error", "modify,static_procedure");
+
+	abolish_predicate(q, pr, hard);
 	return true;
 }
 
@@ -1428,6 +1509,8 @@ builtins g_database_bifs[] =
 {
 	{"abolish", 1, bif_iso_abolish_1, "+predicate_indicator", true, false, BLAH},
 	{"thread_local", 1, bif_thread_local_1, "+term", false, false, BLAH},
+	{"$destroy_module", 1, bif_sys_destroy_module_1, "+atom", false, false, BLAH},
+	{"$create_module", 1, bif_sys_create_module_1, "+atom", false, false, BLAH},
 	{"asserta", 1, bif_iso_asserta_1, "+term", true, false, BLAH},
 	{"assertz", 1, bif_iso_assertz_1, "+term", true, false, BLAH},
 	{"retract", 1, bif_iso_retract_1, "+term", true, false, BLAH},

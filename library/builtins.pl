@@ -127,6 +127,36 @@ call_with_inference_limit(G, L, R) :-
 	'$restore_inference_limit'(Old),
 	(	E == '$inference_limit_exceeded' -> R = inference_limit_exceeded ; throw(E) ).
 
+% in_temporary_module(?Module, :Setup, :Goal) as in SWI's library(modules):
+% Setup, then Goal, run in a module made for them, a fresh one if Module is
+% unbound, which goes when Goal is done, as setup_call_cleanup/3 has it.
+% SWI resolves Setup and Goal in the caller and runs them in Module's
+% context; here they run as Module:Setup and Module:Goal. destroy_module/1
+% empties a module: its clauses, operators and blackboard go and its name
+% is free again, though what is needed to keep stale references safe stays.
+
+:- help(in_temporary_module(?atom,:callable,:callable), [iso(false)]).
+:- help(destroy_module(+atom), [iso(false)]).
+
+in_temporary_module(M, Setup, Goal) :-
+	(	var(M) ->
+		'$fresh_module'(M)
+	;	must_be(M, atom, in_temporary_module/3, _)
+	),
+	setup_call_cleanup(
+		'$create_module'(M),
+		(	call(M:Setup) -> call(M:Goal) ),
+		'$destroy_module'(M)).
+
+destroy_module(M) :-
+	must_be(M, atom, destroy_module/1, _),
+	'$destroy_module'(M).
+
+'$fresh_module'(M) :-
+	flag('$tmp_module', N, N+1),
+	format(atom(M0), '$tmp_module_~d', [N]),
+	(	current_module(M0) -> '$fresh_module'(M) ; M = M0 ).
+
 % flag/3 as SWI has it. New is an atom or is evaluated; '$flag_cas' only
 % sets it if no other thread got in first, else this retries from a fresh read.
 
