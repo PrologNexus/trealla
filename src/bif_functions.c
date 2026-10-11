@@ -2442,6 +2442,98 @@ static bool bif_iso_and_2(query *q)
 	return true;
 }
 
+// x << n and x >> n as SWI and Scryer have them: a negative count shifts
+// the other way, a right shift rounds down, so that a negative x ends at
+// -1, not 0, however far it's shifted, and a left shift too big to hold
+// is a resource error. Not undefined C for a count of 64 or more, nor an
+// imath assertion for a negative one, nor a garbage result for a bigint one.
+
+#define MAX_SHIFT_BITS ((pl_int)1 << 32)
+
+static bool do_shift(query *q, cell *a, cell *b, bool left)
+{
+	cell p1 = *a;						// SET_ACCUM()'s culprit
+
+	if (is_var(a) || is_var(b))
+		return throw_error(q, a, q->st.cur_ctx, "instantiation_error", "not_sufficiently_instantiated");
+
+	if (!is_integer(a))
+		return throw_error(q, a, q->st.cur_ctx, "type_error", "integer");
+
+	if (!is_integer(b))
+		return throw_error(q, b, q->st.cur_ctx, "type_error", "integer");
+
+	bool neg = is_negative(a);
+
+	if (is_negative(b))
+		left = !left;
+
+	// A count too big for a small integer: everything is shifted out, or
+	// would need more memory than there is.
+
+	if (is_bigint(b) || (get_smallint(b) == INT64_MIN)) {
+		if (is_zero(a) || !left) {
+			q->accum.tag = TAG_INT;
+			q->accum.val_int = !left && neg ? -1 : 0;
+			return true;
+		}
+
+		return throw_error(q, b, q->st.cur_ctx, "resource_error", "memory");
+	}
+
+	pl_int n = get_smallint(b) < 0 ? -get_smallint(b) : get_smallint(b);
+
+	if (!left) {
+		if (is_smallint(a)) {
+			q->accum.tag = TAG_INT;
+			q->accum.val_int = n >= 64 ? (neg ? -1 : 0) : get_smallint(a) >> n;
+			return true;
+		}
+
+		if (!neg)
+			mp_int_div_pow2(&a->val_bigint->ival, n, &q->tmp_ival, NULL);
+		else {
+			mpz_t tmp;							// floor, where imath truncates: -((-x - 1) >> n) - 1
+			mp_int_init(&tmp);
+			mp_int_neg(&a->val_bigint->ival, &tmp);
+			mp_int_sub_value(&tmp, 1, &tmp);
+			mp_int_div_pow2(&tmp, n, &q->tmp_ival, NULL);
+			mp_int_clear(&tmp);
+			mp_int_add_value(&q->tmp_ival, 1, &q->tmp_ival);
+			mp_int_neg(&q->tmp_ival, &q->tmp_ival);
+		}
+
+		SET_ACCUM();
+		return true;
+	}
+
+	if (is_zero(a)) {
+		q->accum.tag = TAG_INT;
+		q->accum.val_int = 0;
+		return true;
+	}
+
+	if (n > MAX_SHIFT_BITS)
+		return throw_error(q, b, q->st.cur_ctx, "resource_error", "memory");
+
+	if (is_smallint(a) && (n < 32) && (get_smallint(a) < INT32_MAX) && (get_smallint(a) > INT32_MIN)) {
+		q->accum.tag = TAG_INT;
+		q->accum.val_int = get_smallint(a) * ((pl_int)1 << n);	// a negative x's << is undefined C
+		return true;
+	}
+
+	if (is_smallint(a)) {
+		mpz_t tmp;
+		mp_int_init_value(&tmp, get_smallint(a));
+		mp_int_mul_pow2(&tmp, n, &q->tmp_ival);
+		mp_int_clear(&tmp);
+	} else
+		mp_int_mul_pow2(&a->val_bigint->ival, n, &q->tmp_ival);
+
+	SET_ACCUM();
+	return true;
+}
+
 static bool bif_iso_shl_2(query *q)
 {
 	START_FUNCTION(q);
@@ -2449,38 +2541,7 @@ static bool bif_iso_shl_2(query *q)
 	GET_NEXT_ARG(p2_tmp,any);
 	CLEANUP cell p1 = eval(q, p1_tmp);
 	CLEANUP cell p2 = eval(q, p2_tmp);
-
-	if (is_bigint(&p1) && is_smallint(&p2)) {
-		mp_int_mul_pow2(&p1.val_bigint->ival, p2.val_int, &q->tmp_ival);
-		SET_ACCUM();
-	} else if (is_smallint(&p1) && is_smallint(&p2)) {
-		if (p2.val_int < 64) {
-
-			q->accum.val_int = p1.val_int << p2.val_int;
-
-			if ((p1.val_int >= INT32_MAX) ||
-				(p1.val_int <= INT32_MIN) ||
-				(p2.val_int >= 32)) {
-			} else {
-				q->accum.tag = TAG_INT;
-				return true;
-			}
-		}
-
-		mpz_t tmp;
-		mp_int_init_value(&tmp, p1.val_int);
-		mp_int_mul_pow2(&tmp, p2.val_int, &q->tmp_ival);
-		mp_int_clear(&tmp);
-		SET_ACCUM();
-	} else if (is_var(&p1) || is_var(&p2)) {
-		return throw_error(q, &p1, q->st.cur_ctx, "instantiation_error", "not_sufficiently_instantiated");
-	} else if (!is_integer(&p1)) {
-		return throw_error(q, &p1, q->st.cur_ctx, "type_error", "integer");
-	} else if (!is_integer(&p2)) {
-		return throw_error(q, &p2, q->st.cur_ctx, "type_error", "integer");
-	}
-
-	return true;
+	return do_shift(q, &p1, &p2, true);
 }
 
 static bool bif_iso_shr_2(query *q)
@@ -2490,22 +2551,7 @@ static bool bif_iso_shr_2(query *q)
 	GET_NEXT_ARG(p2_tmp,any);
 	CLEANUP cell p1 = eval(q, p1_tmp);
 	CLEANUP cell p2 = eval(q, p2_tmp);
-
-	if (is_bigint(&p1) && is_smallint(&p2)) {
-		mp_int_div_pow2(&p1.val_bigint->ival, p2.val_int, &q->tmp_ival, NULL);
-		SET_ACCUM();
-	} if (is_smallint(&p1) && is_smallint(&p2)) {
-		q->accum.val_int = p1.val_int >> p2.val_int;
-		q->accum.tag = TAG_INT;
-	} else if (is_var(&p1) || is_var(&p2)) {
-		return throw_error(q, &p1, q->st.cur_ctx, "instantiation_error", "not_sufficiently_instantiated");
-	} else if (!is_integer(&p1)) {
-		return throw_error(q, &p1, q->st.cur_ctx, "type_error", "integer");
-	} else if (!is_integer(&p2)) {
-		return throw_error(q, &p2, q->st.cur_ctx, "type_error", "integer");
-	}
-
-	return true;
+	return do_shift(q, &p1, &p2, false);
 }
 
 static bool bif_iso_neg_1(query *q)
