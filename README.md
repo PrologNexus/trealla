@@ -2211,6 +2211,11 @@ at its next goal even if busy or blocked, can't catch it, and runs its
 `at_exit` goal. It is also detached, so it goes away without a join,
 unless one is already waiting, which then gets `exited(cancelled)`.
 
+As in *SWI-Prolog*, a *thread_signal/2* reaches a thread blocked reading a
+stream or in a socket accept: the read is interrupted (by SIGUSR2, with
+a handler that does nothing), the signal's goal runs, and the read or
+accept carries on unless the goal threw.
+
 These are non-standard but *SWI-Prolog* compatible:
 
 	thread_join/1				# thread_join(+thread)

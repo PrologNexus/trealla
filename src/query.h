@@ -251,6 +251,7 @@ builtins *get_fn_ptr(void *fn);
 // killed by a spurious second timeout before it could free anything.
 
 bool thread_exit_cancelled(query *q);
+bool retry_after_signal(query *q);
 
 // thread_cancel/1 asked this thread to stop: a blocking wait gives up.
 
@@ -259,12 +260,30 @@ inline static bool cancel_pending(const query *q)
 	return q->thread_ptr && q->thread_ptr->cancel_requested;
 }
 
+// A thread_signal/2 is waiting: a blocking wait gives up, for the goal to be
+// tried again once the signal has run.
+
+inline static bool alert_pending(const query *q)
+{
+	thread *self = q->thread_ptr ? q->thread_ptr : q->pl->main_thread;
+	return self && self->alerted;
+}
+
+// A blocking read or wait that came back interrupted: the thread exits if
+// cancelled, retries the goal after a signal sent it, else times out.
+
 inline static bool throw_timeout(query *q)
 {
 	if (cancel_pending(q))
 		return thread_exit_cancelled(q);
 
 	thread *self = q->thread_ptr ? q->thread_ptr : q->pl->main_thread;
+
+	if (!self->timedout && self->alerted) {
+		self->alerted = false;
+		return retry_after_signal(q);
+	}
+
 	self->timedout = 0;
 	return throw_error(q, q->st.instr, q->st.cur_ctx, "time_limit_exceeded", "timed_out");
 }
