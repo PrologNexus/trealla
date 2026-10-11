@@ -37,7 +37,8 @@
 :- module(sandbox, [
 	safe_goal/1, safe_call/1,
 	safe_call/2, safe_call/3, safe_call/4, safe_call/5, safe_call/6, safe_call/7, safe_call/8,
-	safe_guard/2
+	safe_guard/2,
+	safe_load/2, safe_load/3
 	]).
 
 :- use_module(library(lists)).
@@ -88,6 +89,8 @@
 :- help(safe_goal(:callable), [iso(false), desc('Throw unless every predicate the goal can reach is whitelisted.')]).
 :- help(safe_call(:callable), [iso(false), desc('Expand, guard, check with safe_goal/1, then call the goal.')]).
 :- help(safe_call(:callable,?term), [iso(false), desc('safe_call/1 of the closure with the arguments added.')]).
+:- help(safe_load(+atom,+term), [iso(false), desc('Load untrusted source into a module, refusing what it may not do.')]).
+:- help(safe_load(+atom,+term,+list), [iso(false), desc('safe_load/2 with options: check(false) skips checking each clause body.')]).
 :- help(safe_guard(:callable,-callable), [iso(false), desc('Put each goal position still a variable through safe_call/N.')]).
 
 % safe_call(:Goal): expands then checks Goal, and calls it only if safe.
@@ -953,8 +956,298 @@ format_callables([callable|TT], [G|TA], [G|TG]) :-
 format_callables([_|TT], [_|TA], TG) :-
 	format_callables(TT, TA, TG).
 
-% safe_prolog_flag(+Flag, +Value): setting Flag to Value is safe.
+% safe_prolog_flag(+Flag, +Value): setting Flag to Value is safe, as these
+% flags are each module's own.
 
 safe_prolog_flag(occurs_check, _).
 safe_prolog_flag(double_quotes, _).
-safe_prolog_flag(back_quotes, _).
+safe_prolog_flag(unknown, _).
+
+% safe_load(+Module, +Source) and safe_load(+Module, +Source, +Options):
+% load untrusted source into Module, refusing what it may not do, which is
+% what SWI's load_files/2 does with sandboxed(true). Source is string(Text),
+% stream(S) or terms(List). Each term is read with Module's flags and
+% expanded, then:
+%
+%	- a clause must be for Module and not a system predicate, and has
+%	  its body guarded as by safe_guard/2;
+%	- a directive is one of dynamic/discontiguous/multifile/public/
+%	  meta_predicate/table/thread_local for Module's own predicates, op/3
+%	  for a name not yet an operator (operators are global here),
+%	  set_prolog_flag/2 for a safe_prolog_flag/2, use_module/1,2 or
+%	  ensure_loaded/1 of a library by a relative path, one the
+%	  safe_directive/1 hook allows, or else a goal run by safe_call/1;
+%	- initialization/1 goals run by safe_call/1 once the rest is loaded.
+%
+% Then, unless Options has check(false), each clause body loaded must pass
+% safe_goal/1. A refusal throws, leaving what was loaded so far: load into
+% a module of its own, eg. with in_temporary_module/3.
+
+safe_load(M, Source) :-
+	safe_load(M, Source, []).
+
+safe_load(M, Source, Options) :-
+	must_be(atom, M),
+	must_be(list, Options),
+	(	current_module(M) -> true
+	;	'$create_module'(M)
+	),
+	setup_call_cleanup(
+		open_source(Source, In, Close),
+		load_terms(In, M, Bodies, Inits),
+		Close),
+	(	memberchk(check(false), Options) -> true
+	;	forall(member(B, Bodies), safe_goal(M:B))
+	),
+	forall(member(G, Inits), safe_call(M:G)).
+
+open_source(Source, _, _) :-
+	var(Source),
+	!,
+	instantiation_error(Source).
+open_source(string(Text), In, close(S)) :-
+	!,
+	(	atom(Text) -> atom_chars(Text, Cs)
+	;	Cs = Text
+	),
+	open_string(Cs, S),
+	In = stream(S).
+open_source(stream(S), stream(S), true) :- !.
+open_source(terms(Ts), terms(Ts), true) :- !.
+open_source(Source, _, _) :-
+	domain_error(sandbox_source, Source).
+
+load_terms(In, M, Bodies, Inits) :-
+	next_term(In, M, T, In1),
+	(	T == end_of_file
+	->	Bodies = [], Inits = []
+	;	expand_term(T, X),
+		(	is_list(X) -> Xs = X ; Xs = [X] ),
+		load_expanded(Xs, M, Bodies, Bodies1, Inits, Inits1),
+		load_terms(In1, M, Bodies1, Inits1)
+	).
+
+next_term(stream(S), M, T, stream(S)) :-
+	M:read_term(S, T, []).
+next_term(terms([]), _, end_of_file, terms([])) :- !.
+next_term(terms([T|Ts]), _, T, terms(Ts)).
+
+load_expanded([], _, Bs, Bs, Is, Is).
+load_expanded([T|Ts], M, Bs0, Bs, Is0, Is) :-
+	load_term(T, M, Bs0, Bs1, Is0, Is1),
+	load_expanded(Ts, M, Bs1, Bs, Is1, Is).
+
+load_term(T, _, _, _, _, _) :-
+	var(T),
+	!,
+	instantiation_error(T).
+load_term((:- D), M, Bs, Bs, Is0, Is) :-
+	!,
+	load_directive(D, M, Is0, Is).
+load_term((?- D), M, Bs, Bs, Is0, Is) :-
+	!,
+	load_directive(D, M, Is0, Is).
+load_term(C, M, [B|Bs], Bs, Is, Is) :-
+	load_clause(C, M, B).
+
+load_directive(D, _, _, _) :-
+	var(D),
+	!,
+	instantiation_error(D).
+load_directive(initialization(G), M, [G|Is], Is) :-
+	!,
+	must_be(callable, G),
+	_ = M.
+load_directive(initialization(G, When), M, Is0, Is) :-
+	!,
+	must_be(callable, G),
+	(	When == now -> safe_call(M:G), Is0 = Is
+	;	When == after_load -> Is0 = [G|Is]
+	;	domain_error(initialization_type, When)
+	).
+load_directive(D, M, Is, Is) :-
+	directive_kind(D, M, Kind),
+	run_directive(Kind, D, M).
+
+% directive_kind(+Directive, +Module, -Kind): how a directive is allowed,
+% throwing if it isn't.
+
+directive_kind(D, M, hook) :-
+	safe_directive(M:D),
+	!.
+directive_kind(M2:D, M, Kind) :-
+	!,
+	(	M2 == M -> directive_kind(D, M, Kind)
+	;	permission_error(execute, sandboxed_directive, (:- M2:D))
+	).
+directive_kind(D, M, decl) :-
+	safe_pattr(D),
+	!,
+	D =.. [Attr, Preds],
+	safe_pattr(Preds, Attr, M).
+directive_kind(op(P, T, Names), _, op) :-
+	!,
+	(	safe_op_names(Names) -> true
+	;	permission_error(execute, sandboxed_directive, (:- op(P, T, Names)))
+	).
+directive_kind(set_prolog_flag(Flag, Value), _, flag) :-
+	!,
+	(	atom(Flag), ground(Value), safe_prolog_flag(Flag, Value) -> true
+	;	permission_error(execute, sandboxed_directive, (:- set_prolog_flag(Flag, Value)))
+	).
+directive_kind(D, _, load) :-
+	directive_loads_file(D, File),
+	!,
+	safe_path(File).
+directive_kind(D, _, _) :-
+	refused_directive(D),
+	!,
+	permission_error(execute, sandboxed_directive, (:- D)).
+directive_kind(_, _, goal).
+
+run_directive(goal, D, M) :-
+	!,
+	safe_call(M:D).
+run_directive(op, op(P, T, Names), M) :-
+	!,
+	M:op(P, T, Names).
+run_directive(flag, set_prolog_flag(Flag, Value), M) :-
+	!,
+	M:set_prolog_flag(Flag, Value).
+run_directive(load, D, M) :-
+	!,
+	M:D.
+run_directive(_, D, M) :-
+	format(atom(Text), ":- ~q.~n", [D]),
+	load_text(Text, [module(M)]).
+
+safe_pattr(dynamic(_)).
+safe_pattr(discontiguous(_)).
+safe_pattr(multifile(_)).
+safe_pattr(public(_)).
+safe_pattr(meta_predicate(_)).
+safe_pattr(table(_)).
+safe_pattr(thread_local(_)).
+
+safe_pattr(Var, _, _) :-
+	var(Var),
+	!,
+	instantiation_error(Var).
+safe_pattr((A,B), Attr, M) :-
+	!,
+	safe_pattr(A, Attr, M),
+	safe_pattr(B, Attr, M).
+safe_pattr([], _, _) :- !.
+safe_pattr([H|T], Attr, M) :-
+	!,
+	safe_pattr(H, Attr, M),
+	safe_pattr(T, Attr, M).
+safe_pattr(M2:G, Attr, M) :-
+	!,
+	(	M2 == M -> safe_pattr(G, Attr, M)
+	;	Goal =.. [Attr, M2:G],
+		permission_error(execute, sandboxed_directive, (:- Goal))
+	).
+safe_pattr(_, _, _).
+
+safe_op_names(Name) :-
+	atom(Name),
+	!,
+	\+ current_op(_, _, Name).
+safe_op_names(Names) :-
+	is_list(Names),
+	forall(member(Name, Names), (atom(Name), \+ current_op(_, _, Name))).
+
+directive_loads_file(use_module(library(X)), X).
+directive_loads_file(use_module(library(X), _), X).
+directive_loads_file(ensure_loaded(library(X)), X).
+
+refused_directive(module(_, _)).
+refused_directive(use_module(_)).
+refused_directive(use_module(_, _)).
+refused_directive(ensure_loaded(_)).
+refused_directive(include(_)).
+refused_directive(consult(_)).
+refused_directive(load_files(_, _)).
+
+safe_path(X) :-
+	var(X),
+	!,
+	instantiation_error(X).
+safe_path(X) :-
+	atom(X),
+	!,
+	(	\+ sub_atom(X, 0, _, 0, '..'),
+		\+ sub_atom(X, 0, _, _, '/'),
+		\+ sub_atom(X, 0, _, _, '../'),
+		\+ sub_atom(X, _, _, 0, '/..'),
+		\+ sub_atom(X, _, _, _, '/../')
+	->	true
+	;	permission_error(load, sandboxed, library(X))
+	).
+safe_path(A/B) :-
+	!,
+	safe_path(A),
+	safe_path(B).
+safe_path(X) :-
+	permission_error(load, sandboxed, library(X)).
+
+% load_clause(+Clause, +Module, -Body): asserts Clause in Module, its body
+% guarded.
+
+load_clause(C, _, _) :-
+	cyclic_term(C),
+	!,
+	type_error(acyclic_term, C).
+load_clause(M2:C, M, B) :-
+	!,
+	(	M2 == M -> load_clause(C, M, B)
+	;	clause_pi(C, PI),
+		permission_error(modify, sandboxed_procedure, M2:PI)
+	).
+load_clause((H0 :- B0), M, B) :-
+	!,
+	clause_head(H0, M, H),
+	guard(B0, M, B),
+	(	expansion_hook(H) -> safe_goal(M:B)
+	;	true
+	),
+	assertz(M:(H :- B)).
+load_clause(H0, M, true) :-
+	clause_head(H0, M, H),
+	assertz(M:H).
+
+clause_head(H, _, _) :-
+	var(H),
+	!,
+	instantiation_error(H).
+clause_head(M2:H0, M, H) :-
+	!,
+	(	M2 == M -> clause_head(H0, M, H)
+	;	clause_pi(H0, PI),
+		permission_error(modify, sandboxed_procedure, M2:PI)
+	).
+clause_head(H, _, _) :-
+	\+ callable(H),
+	!,
+	type_error(callable, H).
+clause_head(H, M, _) :-
+	system_predicate(M, H),
+	!,
+	functor(H, N, A),
+	permission_error(modify, static_procedure, N/A).
+clause_head(H, _, H).
+
+clause_pi((H :- _), PI) :- !, clause_pi(H, PI).
+clause_pi(_:H, PI) :- !, clause_pi(H, PI).
+clause_pi(H, N/A) :- callable(H), !, functor(H, N, A).
+clause_pi(H, H).
+
+permission_error(Action, Type, Culprit) :-
+	throw(error(permission_error(Action, Type, Culprit), _)).
+
+% An expansion hook runs as code is loaded, so its body must be safe before
+% any of it is.
+
+expansion_hook(term_expansion(_, _)).
+expansion_hook(goal_expansion(_, _)).

@@ -1,0 +1,31 @@
+ok([p/1,q/1])
+ok([counter/1,inc/0])
+ok([go/0,run/1])
+permission_error(call,sandboxed,shell(A))
+permission_error(call,sandboxed,shell(A))
+permission_error(call,sandboxed,shell(A))
+hello_from_init
+ok([p/0])
+permission_error(execute,sandboxed_directive,(:- dynamic user:secret/1))
+permission_error(execute,sandboxed_directive,(:- multifile sandbox:safe_primitive/1))
+permission_error(modify,sandboxed_procedure,sandbox:safe_primitive/1)
+permission_error(modify,sandboxed_procedure,user:term_expansion/2)
+permission_error(call,sandboxed,shell(A))
+permission_error(modify,static_procedure,atom_length/2)
+ok([~~> / 2])
+permission_error(execute,sandboxed_directive,(:- op(0,xfx,=)))
+ok([s/1])
+permission_error(execute,sandboxed_directive,(:- set_prolog_flag(verbose,normal)))
+permission_error(load,sandboxed,library('../etc/passwd'))
+permission_error(execute,sandboxed_directive,(:- use_module('/etc/passwd')))
+permission_error(execute,sandboxed_directive,(:- include(foo)))
+permission_error(execute,sandboxed_directive,(:- module(m,[])))
+ok([g/2])
+syntax_error(mismatched_parens_or_brackets_or_braces)
+run_true_ok
+permission_error(call,sandboxed,shell(A))
+direct(permission_error(call,sandboxed,shell(A)))
+[1,2]
+terms_ok
+domain_error(sandbox_source,file(x))
+check_false_loaded
