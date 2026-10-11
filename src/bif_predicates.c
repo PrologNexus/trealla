@@ -7554,6 +7554,33 @@ static void load_flags(query *q)
 	SB_free(pr);
 }
 
+static void append_op(void *ctx, const op_table *ptr)
+{
+	query *q = ctx;
+	const char *spec = ptr->specifier == OP_FX ? "fx" : ptr->specifier == OP_FY ? "fy"
+		: ptr->specifier == OP_XF ? "xf" : ptr->specifier == OP_YF ? "yf"
+		: ptr->specifier == OP_XFX ? "xfx" : ptr->specifier == OP_XFY ? "xfy" : "yfx";
+	cell tmp[4];
+	make_instr(tmp, new_atom(q->pl, "op"), NULL, 3, 3);
+	make_int(tmp+1, ptr->priority);
+	make_atom(tmp+2, new_atom(q->pl, spec));
+	make_atom(tmp+3, new_atom(q->pl, ptr->name));
+	append_list(q, tmp);
+}
+
+// '$current_ops'(-List): op(Priority,Type,Name) for each operator the
+// calling module sees, for current_op/3.
+
+static bool bif_sys_current_ops_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	CHECKED(init_tmp_heap(q));
+	visit_ops(q->st.m, append_op, q);
+	cell *l = end_list(q);
+	CHECKED(l);
+	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
+}
+
 static void load_ops(query *q)
 {
 	SB_alloc(pr, 1024*8);
@@ -7790,6 +7817,7 @@ builtins g_other_bifs[] =
 	{"$load_properties", 0, bif_sys_load_properties_0, NULL, false, false, BLAH},
 	{"$load_flags", 0, bif_sys_load_flags_0, NULL, false, false, BLAH},
 	{"$load_ops", 0, bif_sys_load_ops_0, NULL, false, false, BLAH},
+	{"$current_ops", 1, bif_sys_current_ops_1, "-list", false, false, BLAH},
 	{"$ops_dirty", 0, bif_sys_ops_dirty_0, NULL, false, false, BLAH},
 	{"$list", 1, bif_sys_list_1, "?list", false, false, BLAH},
 	{"$queue", 1, bif_sys_queue_1, "+term", false, false, BLAH},

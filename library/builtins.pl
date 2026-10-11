@@ -830,8 +830,8 @@ pretty(PI) :-
 
 current_op(A, B, C) :- var(A), var(B), var(C),
 	!,
-	( '$ops_dirty' -> (retractall('$op'(_,_,_)),'$load_ops') ; true ),
-	'$op'(C, B, A).
+	'$current_ops'(Ops),
+	member(op(A, B, C), Ops).
 current_op(_, _, C) :- nonvar(C), \+ atom(C),
 	!, throw(error(type_error(atom,C), current_op/3)).
 current_op(_, B, _) :- nonvar(B), \+ atom(B),
@@ -849,8 +849,8 @@ current_op(A, _, _) :- nonvar(A),
 	\+ (A =< 1200),
 	!, throw(error(domain_error(operator_priority, A), current_op/3)).
 current_op(A, B, C) :-
-	( '$ops_dirty' -> (retractall('$op'(_,_,_)),'$load_ops') ; true ),
-	'$op'(C, B, A).
+	'$current_ops'(Ops),
+	member(op(A, B, C), Ops).
 
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

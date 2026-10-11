@@ -520,7 +520,7 @@ char *relative_to(const char *basefile, const char *relfile)
 	return tmpbuf;
 }
 
-static void do_op(parser *p, cell *c, bool make_public)
+static void do_op(parser *p, cell *c, bool make_public, bool exported)
 {
 	cell *p1 = c + 1, *p2 = c + 2, *p3 = c + 3;
 
@@ -593,6 +593,9 @@ static void do_op(parser *p, cell *c, bool make_public)
 				continue;
 			}
 
+			if (exported)
+				export_op(p->m, name, specifier);
+
 			if (make_public) {
 				if (!set_op(p->pl->user_m, name, specifier, get_smallint(p1))) {
 					if (!p->do_read_term)
@@ -637,6 +640,9 @@ static void do_op(parser *p, cell *c, bool make_public)
 			TPL_free(name);
 			return;
 		}
+
+		if (exported)
+			export_op(p->m, name, specifier);
 
 		if (make_public) {
 			if (!set_op(p->pl->user_m, name, specifier, get_smallint(p1))) {
@@ -1808,9 +1814,8 @@ static bool directive_term(parser *p, cell *c)
 
 					pr->is_public = true;
 				} else if (!strcmp(C_STR(p, head), "op") && (get_arity(head) == 3)) {
-					// Keep exported operators in their declaring module. Importers
-					// find them through search_op() after use_module/1.
-					do_op(p, head, false);
+					// Kept in the declaring module, marked so that importers see it.
+					do_op(p, head, false, true);
 				} else {
 					if (!p->do_read_term)
 						fprintf(stderr, "Error: predicate export failed, '%s' in %s:%d\n", C_STR(p, head), get_loaded(p->m, p->m->filename), p->line_num);
@@ -1939,7 +1944,7 @@ static bool directive_term(parser *p, cell *c)
 	}
 
 	if (!strcmp(dirname, "op") && (get_arity(c) == 3)) {
-		do_op(p, c, false);
+		do_op(p, c, false, false);
 		return true;
 	}
 

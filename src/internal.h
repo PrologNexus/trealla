@@ -593,6 +593,7 @@ typedef struct {
 	const char *name;
 	unsigned specifier;
 	unsigned priority;
+	bool exported;						// in its module's export list, so seen by importers
 } op_table;
 
 // Where *ctx* is the context of the var
