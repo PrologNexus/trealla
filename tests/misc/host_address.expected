@@ -1,0 +1,3 @@
+inet([ip(127,0,0,1)])
+all_has_ipv4
+existence_error(host,'no-such-host.invalid')

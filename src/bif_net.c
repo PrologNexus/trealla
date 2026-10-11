@@ -348,7 +348,7 @@ static bool bif_sys_client_5(query *q)
 	GET_NEXT_ARG(p4,var);
 	GET_NEXT_ARG(p5,list_or_nil);
 	char hostname[1024], path[1024*4];
-	char *cafile = NULL;
+	char *cafile = NULL, *server_name = NULL;
 	int udp = 0, nodelay = 1, ssl = 0, domain = 0, level = 0, verify = 1;
 	hostname[0] = path[0] = '\0';
 	unsigned port = 80;
@@ -400,6 +400,11 @@ static bool bif_sys_client_5(query *q)
 
 				if (is_atom(c))
 					cafile = C_STR(q, c);
+			} else if (!CMP_STRING_TO_CSTR(q, c, "server_name")) {
+				c = deref(q, c + 1, c_ctx);
+
+				if (is_atom(c))
+					server_name = C_STR(q, c);
 			} else if (!CMP_STRING_TO_CSTR(q, c, "verify")) {
 				c = deref(q, c + 1, c_ctx);
 
@@ -495,7 +500,11 @@ static bool bif_sys_client_5(query *q)
 
 	if (str->ssl) {
 		const char *reason;
-		str->sslptr = tpl_enable_ssl(fd, hostname, false, verify, cafile, &reason);
+		// TLS checks and names (SNI) the server as server_name(Host) says, if
+		// given, not by the address connected to: a caller can resolve and
+		// vet an address itself, connect to just that, and still verify the name.
+
+		str->sslptr = tpl_enable_ssl(fd, server_name ? server_name : hostname, false, verify, cafile, &reason);
 
 		if (!str->sslptr) {
 			str->ssl = false;
@@ -851,6 +860,28 @@ static bool bif_sys_host_address_2(query *q)
 	return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
 }
 
+// '$host_addresses'(+Host, -Addresses): all of them, for host_address/3.
+
+static bool bif_sys_host_addresses_2(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	GET_NEXT_ARG(p2,var);
+	char ips[32][64];
+	unsigned n = tpl_host_addresses(C_STR(q, p1), ips, 32);
+	CHECKED(init_tmp_heap(q));
+
+	for (unsigned i = 0; i < n; i++) {
+		cell tmp;
+		make_cstring(&tmp, ips[i]);
+		append_list(q, &tmp);
+		unshare_cell(&tmp);
+	}
+
+	cell *l = n ? end_list(q) : make_nil();
+	CHECKED(l);
+	return unify(q, p2, p2_ctx, l, q->st.cur_ctx);
+}
+
 static bool bif_sys_peer_addr_3(query *q)
 {
 	GET_FIRST_ARG(pstr,stream);
@@ -883,6 +914,7 @@ builtins g_net_bifs[] =
 	{"$udp_recv", 5, bif_sys_udp_recv_5, "+stream,-string,-atom,-integer,+list", false, false, BLAH},
 	{"$udp_send", 5, bif_sys_udp_send_5, "+stream,+term,+atom,+integer,+list", false, false, BLAH},
 	{"$host_address", 2, bif_sys_host_address_2, "+atom,-atom", false, false, BLAH},
+	{"$host_addresses", 2, bif_sys_host_addresses_2, "+atom,-list", false, false, BLAH},
 
 	{0}
 };

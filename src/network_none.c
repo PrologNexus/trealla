@@ -259,6 +259,13 @@ bool tpl_host_address(const char *hostname, char *ip, size_t iplen)
 	return false;
 }
 
+unsigned tpl_host_addresses(const char *hostname, char ips[][64], unsigned max)
+{
+	(void)hostname; (void)ips; (void)max;
+	errno = ENOSYS;
+	return 0;
+}
+
 int get_local_port(int fd) { (void)fd; return unavailable(); }
 
 const char *get_local_hostname(char *hostname, size_t size)

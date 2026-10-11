@@ -22,6 +22,7 @@
 %  * `ssl(+Boolean)`: Socket is SSL/TLS (default is normal) if TCP
 %  * `verify(+Boolean)`: With SSL, check the server's certificate chain and that it names the host (default true)
 %  * `cacert(+Filename)`: With SSL, trust the CAs in Filename instead of the system store
+%  * `server_name(+Host)`: With SSL, send Host as the server name (SNI) and verify the certificate against it, rather than the address connected to
 %  * `alias(+Alias)`: Set an alias to the stream
 %  * `eof_action(+Action)`: Defined what happens if the end of the stream is reached. Values: `error`, `eof_code` and `reset`.
 %  * `type(+Type)`: Type can be `text` or `binary`. Defines the type of the stream, if it's optimized for plain text

@@ -1193,6 +1193,45 @@ bool tpl_host_address(const char *hostname, char *ip, size_t iplen)
 #endif
 }
 
+// Every address the resolver gives for hostname, as numeric strings and each
+// once, so a caller can vet them all before connecting to one of them.
+
+unsigned tpl_host_addresses(const char *hostname, char ips[][64], unsigned max)
+{
+#if !defined(_WIN32) && !defined(__wasi__)
+	struct addrinfo hints, *result;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+
+	if (getaddrinfo(hostname, NULL, &hints, &result) != 0)
+		return 0;
+
+	unsigned n = 0;
+
+	for (struct addrinfo *rp = result; rp && (n < max); rp = rp->ai_next) {
+		if (getnameinfo(rp->ai_addr, rp->ai_addrlen, ips[n], 64, NULL, 0, NI_NUMERICHOST))
+			continue;
+
+		bool seen = false;
+
+		for (unsigned i = 0; (i < n) && !seen; i++)
+			seen = !strcmp(ips[i], ips[n]);
+
+		if (!seen)
+			n++;
+	}
+
+	freeaddrinfo(result);
+	return n;
+#else
+	(void) hostname;
+	(void) ips;
+	(void) max;
+	return 0;
+#endif
+}
+
 // Maps errno onto the lowercase symbol SWI's socket_error/2 reports, so
 // bif_net.c can name a failure without knowing the platform's constants.
 // Anything unrecognised comes back as `unknown`.

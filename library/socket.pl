@@ -61,6 +61,7 @@ they differ only in the interface they present. Use whichever suits.
 	tcp_setopt/2,
 	tcp_getopt/2,
 	tcp_host_to_address/2,
+	host_address/3,
 	gethostname/1,
 	ip_name/2
 	]).
@@ -664,3 +665,21 @@ tcp_host_to_address(Host, Address) :-
 	).
 tcp_host_to_address(_, _) :-
 	throw(error(instantiation_error, tcp_host_to_address/2)).
+
+% host_address(+Host, -Address, +Options): each address the resolver gives
+% for Host on backtracking, as tcp_host_to_address/2 gives the first, so a
+% caller can vet them all before connecting to one. SWI returns sockaddr
+% dicts; this returns the addresses. Options can be domain(inet|inet6).
+
+host_address(Host, Address, Options) :-
+	must_be(atom, Host),
+	must_be(list, Options),
+	(	memberchk(domain(D), Options) -> true ; true ),
+	'$host_addresses'(Host, Atoms),
+	(	Atoms == [] -> throw(error(existence_error(host, Host), host_address/3)) ; true ),
+	member(Atom, Atoms),
+	'$normalise_peer'(Atom, Address),
+	(	D == inet -> Address = ip(_,_,_,_)
+	;	D == inet6 -> Address \= ip(_,_,_,_)
+	;	true
+	).
