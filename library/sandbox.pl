@@ -34,7 +34,11 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-:- module(sandbox, [safe_goal/1, safe_call/1]).
+:- module(sandbox, [
+	safe_goal/1, safe_call/1,
+	safe_call/2, safe_call/3, safe_call/4, safe_call/5, safe_call/6, safe_call/7, safe_call/8,
+	safe_guard/2
+	]).
 
 :- use_module(library(lists)).
 :- use_module(library(assoc)).
@@ -71,18 +75,120 @@
 
 :- meta_predicate
 	safe_goal(:),
-	safe_call(:).
+	safe_call(:),
+	safe_call(:,?),
+	safe_call(:,?,?),
+	safe_call(:,?,?,?),
+	safe_call(:,?,?,?,?),
+	safe_call(:,?,?,?,?,?),
+	safe_call(:,?,?,?,?,?,?),
+	safe_call(:,?,?,?,?,?,?,?),
+	safe_guard(:,-).
 
 :- help(safe_goal(:callable), [iso(false), desc('Throw unless every predicate the goal can reach is whitelisted.')]).
-:- help(safe_call(:callable), [iso(false), desc('Expand, check with safe_goal/1, then call the goal.')]).
+:- help(safe_call(:callable), [iso(false), desc('Expand, guard, check with safe_goal/1, then call the goal.')]).
+:- help(safe_call(:callable,?term), [iso(false), desc('safe_call/1 of the closure with the arguments added.')]).
+:- help(safe_guard(:callable,-callable), [iso(false), desc('Put each goal position still a variable through safe_call/N.')]).
 
 % safe_call(:Goal): expands then checks Goal, and calls it only if safe.
 
 safe_call(Goal0) :-
 	qualified(Goal0, M:Goal1),
-	expand_goal(Goal1, Goal),
+	(	var(Goal1) -> instantiation_error(Goal1)
+	;	true
+	),
+	expand_goal(Goal1, Goal2),
+	guard(Goal2, M, Goal),
 	safe_goal(M:Goal),
 	call(M:Goal).
+
+% safe_call(:Closure, ?A1, ...): safe_call/1 of Closure with the arguments
+% added, so a closure can be checked at the time it's called, eg. by
+% maplist/2. Not in SWI.
+
+safe_call(G, A1) :- safe_closure(G, [A1]).
+safe_call(G, A1, A2) :- safe_closure(G, [A1,A2]).
+safe_call(G, A1, A2, A3) :- safe_closure(G, [A1,A2,A3]).
+safe_call(G, A1, A2, A3, A4) :- safe_closure(G, [A1,A2,A3,A4]).
+safe_call(G, A1, A2, A3, A4, A5) :- safe_closure(G, [A1,A2,A3,A4,A5]).
+safe_call(G, A1, A2, A3, A4, A5, A6) :- safe_closure(G, [A1,A2,A3,A4,A5,A6]).
+safe_call(G, A1, A2, A3, A4, A5, A6, A7) :- safe_closure(G, [A1,A2,A3,A4,A5,A6,A7]).
+
+safe_closure(G0, Extra) :-
+	qualified(G0, M:G1),
+	(	var(G1) -> instantiation_error(G1)
+	;	true
+	),
+	(	lambda_goal(G1, Extra, G) -> true
+	;	G1 =.. L0,
+		append(L0, Extra, L),
+		G =.. L
+	),
+	safe_call(M:G).
+
+% safe_guard(:Goal, -Guarded): Goal with each goal position that is still
+% a variable, which safe_goal/1 can't check, put through safe_call/N to
+% be checked when it is called. It goes through control constructs and the
+% goal arguments of meta-predicates, not into the predicates called. Guarded
+% is qualified with Goal's module. Not in SWI.
+
+safe_guard(Goal0, M:Goal) :-
+	qualified(Goal0, M:Goal1),
+	guard(Goal1, M, Goal).
+
+guard(V, M, sandbox:safe_call(M:V)) :-
+	var(V),
+	!.
+guard(M2:G, M, Guarded) :-
+	!,
+	(	atom(M2) -> Guarded = M2:G1, guard(G, M2, G1)
+	;	Guarded = sandbox:safe_call(M:(M2:G))
+	).
+guard(G, M, Guarded) :-
+	callable(G),
+	guard_spec(G, M, Spec),
+	!,
+	G =.. [Name|Args],
+	Spec =.. [_|Specs],
+	guard_args(Specs, Args, M, Args1),
+	Guarded =.. [Name|Args1].
+guard(G, _, G).
+
+guard_spec(G, M, Spec) :-
+	system_predicate(M, G),
+	generic_goal(G, Spec),
+	safe_meta(Spec),
+	!.
+guard_spec(G, M, Spec) :-
+	\+ system_predicate(M, G),
+	predicate_property(M:G, meta_predicate(Spec)),
+	!.
+
+guard_args([], [], _, []).
+guard_args([S|Ss], [A|As], M, [A1|As1]) :-
+	guard_arg(S, A, M, A1),
+	guard_args(Ss, As, M, As1).
+
+guard_arg(S, A, M, sandbox:safe_call(M:A)) :-
+	var(A),
+	( integer(S) ; S == (^) ),
+	!.
+guard_arg(0, A, M, A1) :-
+	!,
+	guard(A, M, A1).
+guard_arg(^, A, M, A1) :-
+	!,
+	guard_existential(A, M, A1).
+guard_arg(_, A, _, A).
+
+guard_existential(V, M, sandbox:safe_call(M:V)) :-
+	var(V),
+	!.
+guard_existential(V^G, M, V^G1) :-
+	!,
+	guard_existential(G, M, G1).
+guard_existential(G, M, G1) :-
+	guard(G, M, G1).
 
 % safe_goal(:Goal) is det: true if every predicate Goal can reach is safe,
 % that is whitelisted by safe_primitive/1 or a safe meta-predicate whose
@@ -590,6 +696,15 @@ safe_primitive(nb_setval(Var,_)) :-
 safe_primitive(nb_current(_,_)).
 										% output
 safe_primitive(writeln(_)).
+										% checked when called
+safe_primitive(sandbox:safe_call(_)).
+safe_primitive(sandbox:safe_call(_,_)).
+safe_primitive(sandbox:safe_call(_,_,_)).
+safe_primitive(sandbox:safe_call(_,_,_,_)).
+safe_primitive(sandbox:safe_call(_,_,_,_,_)).
+safe_primitive(sandbox:safe_call(_,_,_,_,_,_)).
+safe_primitive(sandbox:safe_call(_,_,_,_,_,_,_)).
+safe_primitive(sandbox:safe_call(_,_,_,_,_,_,_,_)).
 
 % safe_assert(+Term) is semidet: asserting a fact in the current module.
 
@@ -651,10 +766,14 @@ safe_meta(phrase(NT, Xs0), [Goal]) :-
 lambda_goal(Lambda, Goal) :-
 	compound(Lambda),
 	compound_name_arguments(Lambda, Name, [A1,A2|Extra]),
-	(	Name == (>>) -> true
-	;	Name == (/), nonvar(A1), A1 = {_}
-	),
 	L =.. [Name, A1, A2],
+	lambda_goal(L, Extra, Goal).
+
+lambda_goal(L, Extra, Goal) :-
+	compound(L),
+	(	L = (_>>_) -> true
+	;	L = (Free/_), nonvar(Free), Free = {_}
+	),
 	lambda_calls(L, Extra, Goal).
 
 % expand_nt(+NT, ?Xs0, ?Xs, -NewGoal): as the grammar body would compile,

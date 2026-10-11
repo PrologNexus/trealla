@@ -5995,6 +5995,16 @@ static bool bif_sys_predicate_property_2(query *q)
 		if (unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
 			return false;
 
+		// Properties a system predicate doesn't have, as against no property at all.
+
+		static const char *props[] = {"exported", "public", "multifile", "discontiguous",
+			"thread_local", "foreign", "private", "tabled", "choice_construct", "visible", NULL};
+
+		for (const char **pp = props; is_atom(p2) && *pp; pp++) {
+			if (!CMP_STRING_TO_CSTR(q, p2, *pp))
+				return !strcmp(*pp, "visible");
+		}
+
 		return throw_error(q, p2, p2_ctx, "domain_error", "predicate_property");
 	}
 

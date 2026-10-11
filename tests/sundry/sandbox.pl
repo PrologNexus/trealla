@@ -1,6 +1,7 @@
 % library(sandbox), SWI's safe_goal/1 and safe_call/1: whether every
 % predicate a goal can reach is whitelisted, walking user and library code
-% and the goals passed to meta-predicates (trealla-port FR-007).
+% and the goals passed to meta-predicates, and safe_call/N, which checks a
+% goal that is still a variable when it is called (trealla-port FR-007).
 
 :- use_module(library(sandbox)).
 :- use_module(library(lists)).
@@ -77,4 +78,33 @@ main :-
 	t(twice(shell(ls))),
 	t(nosuch(1)),
 	safe_call(double(4, D)), writeq(D), nl,
-	catch(safe_call(evil), error(E, _), (\+ \+ (numbervars(E, 0, _), writeq(E)), nl)).
+	catch(safe_call(evil), error(E, _), (\+ \+ (numbervars(E, 0, _), writeq(E)), nl)),
+	% a goal position still a variable is checked when it's called
+	g(call(_)),
+	g(findall(_, _, _)),
+	g(setof(_, _^_, _)),
+	g(maplist(_, [1])),
+	g(catch(_, _, true)),
+	g(_:foo),
+	g(maplist(double, [1], _)),
+	\+ \+ r(forall(member(G, [true, shell(ls)]), call(G))),
+	\+ \+ r((G = double, call(G, 3, W), W == 6)),
+	\+ \+ r((G = shell, call(G, ls))),
+	\+ \+ r((G = double, maplist(G, [1,2], L), L == [2,4])),
+	\+ \+ r((G = shell, maplist(G, [ls]))),
+	\+ \+ r((Mod = system, Mod:shell(ls))),
+	\+ \+ r((G = (true, shell(ls)), G)),
+	\+ \+ r((G = [X]>>(X > 0), maplist(G, [1]))),
+	\+ \+ r((G = [X]>>shell(X), maplist(G, [ls]))),
+	\+ \+ r(call(_)),
+	\+ \+ r(safe_call(shell, ls)).
+
+g(G) :-
+	safe_guard(G, R),
+	\+ \+ (numbervars(G-R, 0, _), writeq(G-R)),
+	nl.
+
+r(G) :-
+	catch((safe_call(G) -> R = yes ; R = no), error(E, _), R = E),
+	\+ \+ (numbervars(G-R, 0, _), writeq(G-R)),
+	nl.
