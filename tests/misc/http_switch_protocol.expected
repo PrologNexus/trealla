@@ -1,0 +1,4 @@
+echo(['HTTP/1.1 101 Switching Protocols','Upgrade: echo','Connection: Upgrade'],echoed(hello))
+thread(['HTTP/1.1 101 Switching Protocols'],echoed(hello))
+fail(['HTTP/1.1 101 Switching Protocols'],end_of_file)
+plain_still_served

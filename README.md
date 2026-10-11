@@ -1780,6 +1780,7 @@ one request at a time and returns only when stopped.
 	http_dispatch/1			# http_dispatch(+Request)
 	http_redirect/3			# http_redirect(+How, +To, +Request)
 	http_404/2				# http_404(+Opts, +Request)
+	http_switch_protocol/2	# http_switch_protocol(:Goal, +Opts)
 
 ```console
 	?- http_get("https://github.com/trealla-prolog/trealla", Data, [status_code(Code)]).
@@ -1799,6 +1800,16 @@ blank line, then the body.
 
 	main :- http_server(http_dispatch, [port(8080)]).
 ```
+
+A handler can instead take the connection over, to go on in another
+protocol such as WebSocket on the same port. *http_switch_protocol/2*
+replies 101 Switching Protocols, with any *headers([Name(Value), ...])*
+given and no *Content-Length* or *Connection: close*, then calls
+*call(Goal, In, Out)* on the raw connection. In and Out are the one
+socket stream, to close once. If Goal succeeds the connection is its
+own, to keep or pass to a thread; if it fails or throws, the server
+closes it. As the server takes one request at a time, a long-lived
+protocol belongs in a thread Goal creates.
 
 
 URIs

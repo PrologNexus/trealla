@@ -1,6 +1,7 @@
 :- module(http_dispatch, [
 	http_handler/3, http_delete_handler/1, http_current_handler/2,
-	http_dispatch/1, http_redirect/3, http_404/2
+	http_dispatch/1, http_redirect/3, http_404/2,
+	http_switch_protocol/2
 	]).
 
 /** Handler dispatch, after SWI-Prolog's library(http/http_dispatch).
@@ -22,6 +23,14 @@ Serve with http_server(http_dispatch, [port(Port)]).
 :- use_module(library(lists)).
 
 :- meta_predicate(http_handler(+, :, +)).
+:- meta_predicate(http_switch_protocol(2, +)).
+
+% As SWI makes it available here too: the server (library(http/thread_httpd))
+% replies 101 and calls Goal on the connection. See there for the details.
+
+http_switch_protocol(Goal, Options) :-
+	must_be(list, Options),
+	throw(http_reply(switching_protocols(Goal, Options))).
 
 :- dynamic('$http_handler'/4).
 
