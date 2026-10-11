@@ -395,6 +395,9 @@ predicate *thread_local_shadow(predicate *pr)
 	return sh;
 }
 
+static predicate *revive_buried(module *m, const cell *c);
+static void free_buried(module *m);
+
 predicate *create_predicate(module *m, cell *c, bool *created)
 {
 	if (created) *created = false;
@@ -413,9 +416,9 @@ predicate *create_predicate(module *m, cell *c, bool *created)
 		return NULL;
 	}
 
-	predicate *pr = TPL_calloc(1, sizeof(predicate));
+	predicate *pr = is_interned(c) ? revive_buried(m, c) : NULL;
 
-	if (!pr)
+	if (!pr && !(pr = TPL_calloc(1, sizeof(predicate))))
 		return NULL;
 
 	list_push_back(&m->predicates, pr);
@@ -3549,6 +3552,8 @@ void module_destroy(module *m)
 	while ((pr = list_front(&m->predicates)) != NULL)
 		destroy_predicate(m, pr);
 
+	free_buried(m);
+
 	while (m->gex_head) {
 		pi *save = m->gex_head;
 		m->gex_head = m->gex_head->next;
@@ -3570,6 +3575,9 @@ void module_destroy(module *m)
 
 	if ((m->pl->modules.front == &m->hdr) || m->hdr.prev || m->hdr.next)
 		list_remove(&m->pl->modules, m);
+
+	if ((m->id < m->pl->modmap_alloc) && (m->pl->modmap[m->id] == m))
+		m->pl->modmap[m->id] = NULL;
 
 	deinit_lock(&m->guard);
 	TPL_free(m);
@@ -3652,21 +3660,16 @@ bool module_add_use(module *m, module *used)
 	return true;
 }
 
-// Ids are handed out monotonically, so the map only ever grows at the end.
+// Ids are handed out monotonically, a reused module keeping its own, so
+// the map only ever grows at the end, as far as the modules made need.
 
 static bool modmap_set(prolog *pl, unsigned id, module *m)
 {
 	if (id >= pl->modmap_alloc) {
-		if (id >= MAX_MODULES)
-			return false;
-
 		unsigned wanted = pl->modmap_alloc ? pl->modmap_alloc * 2 : 16;
 
 		while (wanted <= id)
 			wanted *= 2;
-
-		if (wanted > MAX_MODULES)
-			wanted = MAX_MODULES;
 
 		module **tmp = TPL_realloc(pl->modmap, wanted * sizeof(module*));
 
@@ -3683,15 +3686,151 @@ static bool modmap_set(prolog *pl, unsigned id, module *m)
 	return true;
 }
 
-module *module_create(prolog *pl, const char *name)
+// A module destroy_module/1 emptied, taken again rather than a new one
+// made, so a program that makes and destroys modules, one a request say,
+// holds as many as it has at once, not as many as it has ever made. It
+// keeps its id and its buried predicate headers (see
+// module_bury_predicates()); the rest is freed here, which assumes nothing
+// still runs in the old module.
+
+static module *module_reuse(prolog *pl)
 {
-	module *m = TPL_calloc(1, sizeof(module));
+	prolog_lock(pl);
+	module *m = pl->dead_modules;
+
+	if (m)
+		pl->dead_modules = m->dead_next;
+
+	prolog_unlock(pl);
 
 	if (!m)
 		return NULL;
 
-	init_lock(&m->guard);
-	m->pl = pl;
+	sliter *iter = sl_first(m->defops);
+	op_table *opptr;
+
+	while (sl_next(iter, (void**)&opptr))
+		TPL_free(opptr);
+
+	sl_done(iter);
+	sl_destroy(m->defops);
+	iter = sl_first(m->ops);
+
+	while (sl_next(iter, (void**)&opptr))
+		TPL_free(opptr);
+
+	sl_done(iter);
+	sl_destroy(m->ops);
+	sl_destroy(m->props);
+
+	while (m->gex_head) {
+		pi *save = m->gex_head;
+		m->gex_head = m->gex_head->next;
+		TPL_free(save);
+	}
+
+	if (m->fp)
+		fclose(m->fp);
+
+	sl_destroy(m->index);
+	sl_destroy(m->keyval);
+	quad_reset(m);
+	parser_destroy(m->p);
+	clear_loaded(m);
+
+	m->dead_next = NULL;
+	m->orig = NULL;
+	m->gex_head = m->gex_tail = NULL;
+	m->p = NULL;
+	m->fp = NULL;
+	m->filename = m->name = m->actual_filename = NULL;
+	m->index = m->ops = m->defops = m->keyval = m->props = NULL;
+	m->loaded_files = NULL;
+	memset(&m->flags, 0, sizeof(m->flags));
+	m->idx_used = m->arity = 0;
+	m->if_depth = 0;
+	memset(m->ifs_blocked, 0, sizeof(m->ifs_blocked));
+	memset(m->ifs_done, 0, sizeof(m->ifs_done));
+	m->quad_query = m->quad_name = NULL;
+	m->quad_num_vars = m->quad_line_num = 0;
+	m->in_quad = m->quad_recorded = m->user_ops = m->prebuilt = m->from_file = false;
+	m->make_public = m->loaded_properties = m->loading = m->error = false;
+	m->ignore_vars = m->wild_goal_expansion = m->make = m->run_init = false;
+	return m;
+}
+
+// For destroy_module/1: m's predicate headers, abolished, out of its index
+// and list onto m->buried. A pointer still cached to one finds it
+// abolished, and so searches again (see match_head()). When m is taken
+// again, create_predicate() revives the one of the same name and arity
+// rather than making another, so the headers a reused module holds are
+// bounded by the predicates it has had, not the times it was reused. A
+// revived one is in m again, which a pointer cached for m's old name
+// isn't, and match_head() checks that too.
+
+void module_bury_predicates(module *m)
+{
+	predicate *pr;
+
+	while ((pr = list_pop_front(&m->predicates)) != NULL) {
+		sl_rem(m->index, &pr->key, pr);
+		pr->is_abolished = true;
+		pr->filename = NULL;			// m->filename goes when m is reused
+		list_push_back(&m->buried, pr);
+	}
+}
+
+// A buried header of m's for c, made like new.
+
+static predicate *revive_buried(module *m, const cell *c)
+{
+	for (predicate *pr = list_front(&m->buried); pr; pr = list_next(pr)) {
+		if ((pr->key.val_off != c->val_off) || (get_arity(&pr->key) != get_arity(c)))
+			continue;
+
+		list_remove(&m->buried, pr);
+
+		if (pr->meta_args) {
+			unshare_cells(pr->meta_args, pr->meta_args->num_cells);
+			TPL_free(pr->meta_args);
+		}
+
+		memset(pr, 0, sizeof(predicate));
+		pr->is_revived = true;
+		return pr;
+	}
+
+	return NULL;
+}
+
+static void free_buried(module *m)
+{
+	predicate *pr;
+
+	while ((pr = list_pop_front(&m->buried)) != NULL) {
+		if (pr->meta_args) {
+			unshare_cells(pr->meta_args, pr->meta_args->num_cells);
+			TPL_free(pr->meta_args);
+		}
+
+		TPL_free(pr);
+	}
+}
+
+module *module_create(prolog *pl, const char *name)
+{
+	module *m = module_reuse(pl);
+
+	if (!m) {
+		if (!(m = TPL_calloc(1, sizeof(module))))
+			return NULL;
+
+		init_lock(&m->guard);
+		m->pl = pl;
+		m->id = ++pl->next_mod_id;
+		modmap_set(pl, m->id, m);
+	}
+
 	m->filename = set_known(m, name);
 	m->name = set_known(m, name);
 	m->flags.unknown = UNK_ERROR;
@@ -3700,10 +3839,8 @@ module *module_create(prolog *pl, const char *name)
 	m->flags.character_escapes = true;
 	m->flags.occurs_check = false;
 	m->error = false;
-	m->id = ++pl->next_mod_id;
 	m->defops = sl_create((void*)fake_strcmp, NULL, NULL);
 	m->keyval = sl_create((void*)fake_strcmp, (void*)keyval_free, NULL);
-	modmap_set(pl, m->id, m);
 
 	if (strcmp(name, "system")) {
 		for (const op_table *ptr = g_ops; ptr->name; ptr++) {

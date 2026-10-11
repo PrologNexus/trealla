@@ -2861,6 +2861,19 @@ static bool find_key(query *q, predicate *pr, cell *key, pl_ctx key_ctx)
 	return true;
 }
 
+// A predicate cached from a module destroy_module/1 emptied may since have
+// been revived in a module that took its place (see
+// module_bury_predicates()), so a revived one is only good when its module
+// is the one running. Others are left alone: library code runs in its
+// caller's module and relies on what it cached from its own. pr->m is only
+// compared, never followed: a builtin's cell holds its bif here, which the
+// caller searches past anyway.
+
+static inline bool match_in_view(const query *q, const predicate *pr)
+{
+	return !pr->is_revived || (pr->m == q->st.m);
+}
+
 // The predicate clause/retract act on. An explicit module, from M:Head,
 // is looked up every time: M may be bound at run time, so the head cell's
 // cached match could belong to another module.
@@ -2882,7 +2895,7 @@ static predicate *find_db_predicate(query *q, module *m, cell *c)
 	else if (is_cstring(c))
 		convert_to_literal(q->st.m, c);
 
-	if (pr && pr->is_abolished)
+	if (pr && (pr->is_abolished || !match_in_view(q, pr)))
 		pr = search_predicate(q->st.m, c);
 
 	if (!pr || is_evaluable(c) || is_builtin(c)) {
@@ -3114,7 +3127,7 @@ bool match_head(query *q)
 			convert_to_literal(q->st.m, c);
 		}
 
-		if (pr && pr->is_abolished)
+		if (pr && (pr->is_abolished || !match_in_view(q, pr)))
 			pr = search_predicate(q->st.m, c);
 
 		if (!pr || is_evaluable(c) || is_builtin(c)) {

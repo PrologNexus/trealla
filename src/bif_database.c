@@ -341,10 +341,11 @@ static bool rule_head_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, 
 }
 
 // '$destroy_module'(+Name): emptied rather than freed. Code can hold a
-// cached pointer to one of its predicates, or a frame or a return point
-// its module, so the module and its predicate headers stay, abolished, on
-// pl->dead_modules till exit. Its clauses, indexes, operators, blackboard
-// and imports go, and so does its name, for a new module to take.
+// cached pointer to one of its predicates, so their headers stay till
+// exit, abolished (see module_bury_predicates()). Its clauses, indexes,
+// operators, blackboard and imports go, and so does its name, for a new
+// module to take, and the module itself goes on pl->dead_modules, for
+// module_create() to take again.
 
 static bool bif_sys_destroy_module_1(query *q)
 {
@@ -385,6 +386,7 @@ static bool bif_sys_destroy_module_1(query *q)
 
 	list_remove(&q->pl->modules, m);
 	m->hdr.prev = m->hdr.next = NULL;
+	module_bury_predicates(m);
 	m->dead_next = q->pl->dead_modules;
 	q->pl->dead_modules = m;
 	prolog_unlock(q->pl);

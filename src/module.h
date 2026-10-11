@@ -34,6 +34,7 @@ predicate *search_predicate(module *m, cell *c);
 predicate *create_predicate(module *m, cell *c, bool *created);
 predicate *thread_local_shadow(predicate *pr);
 void module_clear_tables(module *m);
+void module_bury_predicates(module *m);
 bool find_goal_expansion(module *m, cell *c);
 bool find_goal_expansion_specific(module *m, cell *c);
 bool search_goal_expansion(module *m, cell *c);
