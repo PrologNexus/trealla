@@ -159,6 +159,41 @@ static thread *main_thread(prolog *pl)
 
 static _Thread_local thread *g_self_thread;
 
+// A wait thread_cancel/1 interrupted ends the thread there, as the
+// thread_exit(cancelled) it was sent does when it is next between goals.
+
+bool thread_exit_cancelled(query *q)
+{
+	thread *t = q->thread_ptr;
+	cell *tmp = TPL_calloc(2, sizeof(cell));
+	CHECKED(tmp);
+	make_instr(tmp, new_atom(q->pl, "exited"), NULL, 1, 1);
+	make_atom(tmp+1, new_atom(q->pl, "cancelled"));
+
+	if (t->exit_code) {
+		unshare_cells(t->exit_code, t->exit_code->num_cells);
+		TPL_free(t->exit_code);
+	}
+
+	t->exit_code = tmp;
+
+	// The thread_exit(cancelled) still queued is done with: left there, it
+	// would end the at_exit goal before that ran a goal.
+
+	acquire_lock(&t->guard);
+	msg *m;
+
+	while ((m = list_pop_front(&t->signals)) != NULL) {
+		unshare_cells(m->c, m->c->num_cells);
+		TPL_free(m);
+	}
+
+	release_lock(&t->guard);
+	q->halt_code = 0;
+	q->halt = q->error = true;
+	return true;
+}
+
 thread *current_thread(prolog *pl)
 {
 	return g_self_thread ? g_self_thread : pl->main_thread;
@@ -440,6 +475,7 @@ static int new_thread(prolog *pl)
 #endif
 	t->is_detached = false;
 	t->is_joining = false;
+	t->cancel_requested = false;
 	gvars_destroy(t);					// a recycled struct starts with none
 	t->gvar_seq = 0;
 	t->is_queue_only = false;
@@ -1689,6 +1725,7 @@ static bool bif_thread_cancel_1(query *q)
 	}
 
 	release_lock(&t->guard);
+	t->cancel_requested = true;			// for a thread blocked in a read or accept, see tpl_wait_fd()
 	cell goal[2];
 	make_instr(goal, new_atom(q->pl, "thread_exit"), bif_thread_exit_1, 1, 1);
 	make_atom(goal+1, new_atom(q->pl, "cancelled"));

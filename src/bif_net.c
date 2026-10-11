@@ -248,13 +248,40 @@ static bool bif_sys_accept_2(query *q)
 	int peer_port = 0;
 	int fd;
 
-	// A listener closed by another thread wakes this with an error, which
+	// Wait in the interruptible slices reads use, so an alarm, an
+	// interrupt or thread_cancel/1 reaches a thread blocked here. A
+	// listener closed by another thread wakes this with an error, which
 	// must be reported, not waited on or turned into a silent failure. A
-	// client that gave up before being accepted (ECONNABORTED) is retried.
+	// client that gave up before being accepted (ECONNABORTED, or EAGAIN
+	// after the wait said ready) is waited past.
 
-	do {
+	for (;;) {
+		if (str->is_closing || !str->is_active || !str->fp_in) {
+			fd = -1;
+			break;
+		}
+
+		if (!q->is_task && !tpl_wait_fd_readable(q, fileno(str->fp_in)))
+			return throw_timeout(q);
+
+		if (str->is_closing || !str->is_active || !str->fp_in) {
+			fd = -1;
+			break;
+		}
+
 		fd = tpl_accept(str, &peer_addr, &peer_port);
-	} while ((fd == -1) && ((errno == EINTR) || (errno == ECONNABORTED)) && !str->is_closing);
+
+		if ((fd != -1) || str->is_closing)
+			break;
+
+		if ((errno == EINTR) || (errno == ECONNABORTED))
+			continue;
+
+		if (!q->is_task && ((errno == EAGAIN) || (errno == EWOULDBLOCK)))
+			continue;
+
+		break;
+	}
 
 	if (fd == -1) {
 		if (str->is_closing || !str->is_active)

@@ -250,8 +250,20 @@ builtins *get_fn_ptr(void *fn);
 // leaked its timer: the '$alarm'(0, Timer) in its recovery goal was
 // killed by a spurious second timeout before it could free anything.
 
+bool thread_exit_cancelled(query *q);
+
+// thread_cancel/1 asked this thread to stop: a blocking wait gives up.
+
+inline static bool cancel_pending(const query *q)
+{
+	return q->thread_ptr && q->thread_ptr->cancel_requested;
+}
+
 inline static bool throw_timeout(query *q)
 {
+	if (cancel_pending(q))
+		return thread_exit_cancelled(q);
+
 	thread *self = q->thread_ptr ? q->thread_ptr : q->pl->main_thread;
 	self->timedout = 0;
 	return throw_error(q, q->st.instr, q->st.cur_ctx, "time_limit_exceeded", "timed_out");

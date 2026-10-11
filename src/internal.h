@@ -911,6 +911,7 @@ struct thread_ {
 	int chan, locked_by;
 	pl_atomic bool is_active;
 	bool is_joining;						// under guard: a join is waiting, so it can't be detached
+	pl_atomic bool cancel_requested;		// thread_cancel/1: a blocking wait gives up and the thread exits
 	skiplist *gvars;						// b_setval/nb_setval, this thread's own
 	uint64_t gvar_seq;
 	predicate **tl_shadows;					// this thread's shadows of thread_local/1 predicates

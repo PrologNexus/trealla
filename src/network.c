@@ -716,7 +716,7 @@ static bool tpl_wait_fd(query *q, int fd, bool for_write)
 	SOCKET sock = (SOCKET)fd;
 
 	for (;;) {
-		if (interrupt_pending(q)) {
+		if (interrupt_pending(q) || cancel_pending(q)) {
 			errno = EINTR;
 			return false;
 		}
@@ -753,7 +753,7 @@ static bool tpl_wait_fd(query *q, int fd, bool for_write)
 		return true;
 
 	for (;;) {
-		if (interrupt_pending(q)) {
+		if (interrupt_pending(q) || cancel_pending(q)) {
 			errno = EINTR;
 			return false;
 		}
