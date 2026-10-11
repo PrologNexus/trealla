@@ -1467,7 +1467,7 @@ inline static pl_idx dup_cells_by_ref(cell *dst, const cell *src, pl_ctx src_ctx
 cell *list_head(cell *l, cell *tmp);
 cell *list_tail(cell *l, cell *tmp);
 
-enum clause_type { DO_CLAUSE, DO_RETRACT, DO_RETRACTALL };
+enum clause_type { DO_CLAUSE, DO_CLAUSE_STATIC, DO_RETRACT, DO_RETRACTALL };
 
 char *formatted(const char *src, int srclen, bool dq, bool json);
 char *slicedup(const char *s, size_t n);

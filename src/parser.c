@@ -1522,7 +1522,31 @@ static bool directive_term(parser *p, cell *c)
 		query q = (query){0};
 		q.pl = p->pl;
 		q.st.m = p->m;
-		char *dst = print_term_to_strbuf(&q, p1, p1_ctx, 0);
+		char *dst;
+
+		// Argument by argument, so an operator name doesn't print infix.
+
+		if (get_arity(p1)) {
+			SB_alloc(sb, 256);
+			SB_strcat(sb, C_STR(p, p1));
+			SB_strcat(sb, "(");
+			cell *arg = p1 + 1;
+
+			for (unsigned i = 0; i < get_arity(p1); i++, arg += arg->num_cells) {
+				char *s = print_term_to_strbuf(&q, arg, p1_ctx, 0);
+				ENSURE(s);
+				if (i) SB_strcat(sb, ",");
+				SB_strcat(sb, s);
+				TPL_free(s);
+			}
+
+			SB_strcat(sb, ")");
+			dst = TPL_strdup(SB_cstr(sb));
+			SB_free(sb);
+		} else
+			dst = print_term_to_strbuf(&q, p1, p1_ctx, 0);
+
+		ENSURE(dst);
 		builtins *ptr = TPL_calloc(1, sizeof(builtins));
 		ENSURE(ptr);
 		ptr->name = TPL_strdup(C_STR(p, p1));

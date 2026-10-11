@@ -851,6 +851,57 @@ static bool bif_sys_gvar_get_2(query *q)
 	return unify(q, p2, p2_ctx, tmp, q->st.cur_ctx);
 }
 
+// '$gvar_del'(+Key), nb_delete/1: drops whatever the key has stacked.
+
+static bool bif_sys_gvar_del_1(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+
+	if (!gvar_key(q, p1, p1_ctx))
+		return false;
+
+	thread *t = get_self_query(q);
+
+	if (t->gvars) {
+		while (sl_del(t->gvars, C_STR(q, p1)))
+			;
+	}
+
+	return true;
+}
+
+// '$gvar_keys'(-List): each key the calling thread has set, once.
+
+static bool bif_sys_gvar_keys_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	thread *t = get_self_query(q);
+	CHECKED(init_tmp_heap(q));
+
+	if (t->gvars) {
+		sliter *iter = sl_first(t->gvars);
+		const char *prev = NULL;
+
+		while (sl_next(iter, NULL)) {
+			const char *key = sl_key(iter);
+
+			if (prev && !strcmp(prev, key))
+				continue;
+
+			prev = key;
+			cell tmp;
+			make_atom(&tmp, new_atom(q->pl, key));
+			append_list(q, &tmp);
+		}
+
+		sl_done(iter);
+	}
+
+	cell *l = end_list(q);
+	CHECKED(l);
+	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
+}
+
 builtins g_bboard_bifs[] =
 {
 	{"$bb_b_put", 2, bif_bb_b_put_2, ":atom,+term", false, false, BLAH},
@@ -860,6 +911,8 @@ builtins g_bboard_bifs[] =
 	{"$bb_update", 3, bif_sys_bb_update_3, ":atom,?term,+term", false, false, BLAH},
 	{"$gvar_put", 3, bif_sys_gvar_put_3, "+atom,+term,+atom", false, false, BLAH},
 	{"$gvar_get", 2, bif_sys_gvar_get_2, "+atom,?term", false, false, BLAH},
+	{"$gvar_del", 1, bif_sys_gvar_del_1, "+atom", false, false, BLAH},
+	{"$gvar_keys", 1, bif_sys_gvar_keys_1, "-list", false, false, BLAH},
 	{"$bb_is_live", 1, bif_sys_bb_is_live_1, ":atom", false, false, BLAH},
 
 	{0}

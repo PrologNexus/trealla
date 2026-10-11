@@ -6065,6 +6065,61 @@ static bool bif_sys_predicate_property_2(query *q)
 	return false;
 }
 
+// '$predicate_counts'(:Head, -Clauses, -Rules), for predicate_property/2's
+// number_of_clauses and number_of_rules: fails unless Head's predicate is
+// dynamic or has clauses here, so not for one only imported.
+
+static bool bif_sys_predicate_counts_3(query *q)
+{
+	GET_FIRST_ARG(p1,callable);
+	GET_NEXT_ARG(p2,var);
+	GET_NEXT_ARG(p3,var);
+	module *m = q->st.m;
+
+	if ((p1->val_off == g_colon_s) && (get_arity(p1) == 2)) {
+		cell *cm = deref(q, p1 + 1, p1_ctx);
+
+		if (!is_atom(cm) || !(m = find_module(q->pl, C_STR(q, cm))))
+			return false;
+
+		p1 = deref(q, p1 + 2, p1_ctx);
+
+		if (!is_callable(p1))
+			return false;
+	}
+
+	predicate *pr = find_predicate(m, p1);
+
+	if (pr && pr->is_thread_local)
+		pr = thread_local_shadow(pr);
+
+	if (!pr || (!pr->head && !pr->is_dynamic))
+		return false;
+
+	pl_int clauses = 0, rules = 0;
+	prolog_lock_mod(q->pl, pr->m);
+
+	for (rule *r = pr->head; r; r = r->next) {
+		if (r->dbgen_retracted)
+			continue;
+
+		clauses++;
+
+		if (get_logical_body(r->cl.cells))		// is_fact is set only when consulting
+			rules++;
+	}
+
+	prolog_unlock_mod(q->pl, pr->m);
+	cell tmp;
+	make_int(&tmp, clauses);
+
+	if (!unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
+		return false;
+
+	make_int(&tmp, rules);
+	return unify(q, p3, p3_ctx, &tmp, q->st.cur_ctx);
+}
+
 static bool bif_sys_evaluable_property_2(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
@@ -7105,6 +7160,14 @@ static void load_properties(module *m)
 	format_property(m, tmpbuf, sizeof(tmpbuf), "task_call", 1, "meta_predicate(task_call(0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "findall", 3, "meta_predicate(findall(?,0,-))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "findnsols", 4, "meta_predicate(findnsols(?,?,0,-))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "forall", 2, "meta_predicate(forall(0,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "limit", 2, "meta_predicate(limit(+,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "offset", 2, "meta_predicate(offset(+,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "with_output_to", 2, "meta_predicate(with_output_to(?,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "format", 2, "meta_predicate(format(+,:))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "format", 3, "meta_predicate(format(+,+,:))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "task_create", 2, "meta_predicate(task_create(0,-))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "in_temporary_module", 3, "meta_predicate(in_temporary_module(?,0,0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "|", 2, "meta_predicate(((:)|(+)))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "time", 1, "meta_predicate(time(0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "call_nth", 2, "meta_predicate(call_nth(0,?))", false); SB_strcat(pr, tmpbuf);
@@ -7668,6 +7731,7 @@ builtins g_other_bifs[] =
 	{"$counter", 1, bif_sys_counter_1, NULL, false, false, BLAH},
 	{"$legacy_current_prolog_flag", 2, bif_sys_current_prolog_flag_2, "+atom,?term", true, false, BLAH},
 	{"$legacy_predicate_property", 2, bif_sys_predicate_property_2, "+callable,?string", false, false, BLAH},
+	{"$predicate_counts", 3, bif_sys_predicate_counts_3, "+callable,-integer,-integer", false, false, BLAH},
 	{"$legacy_evaluable_property", 2, bif_sys_evaluable_property_2, "+callable,?string", false, false, BLAH},
 	{"$det_length_rundown", 2, bif_sys_det_length_rundown_2, "?list,+integer", false, false, BLAH},
 	{"$memberchk", 3, bif_sys_memberchk_3, "?term,?list,-term", false, false, BLAH},

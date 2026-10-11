@@ -59,6 +59,8 @@ static const op_table g_ops[] =
 	{"\\=", OP_XFX, 700},
 	{"==", OP_XFX, 700},
 	{"\\==", OP_XFX, 700},
+	{"=@=", OP_XFX, 700},
+	{"\\=@=", OP_XFX, 700},
 	{"=:=", OP_XFX, 700},
 	{"=\\=", OP_XFX, 700},
 	{"<", OP_XFX, 700},

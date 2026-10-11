@@ -163,7 +163,7 @@ static bool bif_clause_3(query *q)
 	return false;
 }
 
-static bool bif_iso_clause_2(query *q)
+static bool do_clause_2(query *q, enum clause_type type)
 {
 	GET_FIRST_ARG(p1,callable);
 	GET_NEXT_ARG(p2,callable_or_var);
@@ -176,7 +176,7 @@ static bool bif_iso_clause_2(query *q)
 
 	cell *body;
 
-	while (match_clause(q, m, p1, p1_ctx, &body, DO_CLAUSE)) {
+	while (match_clause(q, m, p1, p1_ctx, &body, type)) {
 		if (q->did_throw) return true;
 		bool ok;
 
@@ -204,6 +204,19 @@ static bool bif_iso_clause_2(query *q)
 	}
 
 	return false;
+}
+
+static bool bif_iso_clause_2(query *q)
+{
+	return do_clause_2(q, DO_CLAUSE);
+}
+
+// '$clause'(:Head, ?Body): clause/2 that reads static predicates too, for
+// code analysis such as library(sandbox) does.
+
+static bool bif_sys_clause_2(query *q)
+{
+	return do_clause_2(q, DO_CLAUSE_STATIC);
 }
 
 static void predicate_purge_dirty_list(predicate *pr)
@@ -1518,6 +1531,7 @@ builtins g_database_bifs[] =
 	{"retract", 1, bif_iso_retract_1, "+term", true, false, BLAH},
 	{"retractall", 1, bif_iso_retractall_1, "+term", true, false, BLAH},
 	{"clause", 2, bif_iso_clause_2, "+term,?term", true, false, BLAH},
+	{"$clause", 2, bif_sys_clause_2, "+term,?term", false, false, BLAH},
 
 	{"asserta", 2, bif_asserta_2, "+term,-string", false, false, BLAH},
 	{"assertz", 2, bif_assertz_2, "+term,-string", false, false, BLAH},

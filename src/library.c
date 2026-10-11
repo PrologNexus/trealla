@@ -87,6 +87,8 @@ extern unsigned char library_uri_pl[];
 extern unsigned int library_uri_pl_len;
 extern unsigned char library_url_pl[];
 extern unsigned int library_url_pl_len;
+extern unsigned char library_prolog_format_pl[];
+extern unsigned int library_prolog_format_pl_len;
 extern unsigned char library_linda_pl[];
 extern unsigned int library_linda_pl_len;
 extern unsigned char library_rbtrees_pl[];
@@ -180,6 +182,7 @@ library g_libs[] = {
 	 {"ugraphs", library_ugraphs_pl, &library_ugraphs_pl_len},
 	 {"uri", library_uri_pl, &library_uri_pl_len},
 	 {"url", library_url_pl, &library_url_pl_len},
+	 {"prolog_format", library_prolog_format_pl, &library_prolog_format_pl_len},
 	 {"uuid", library_uuid_pl, &library_uuid_pl_len},
 	 {"when", library_when_pl, &library_when_pl_len},
 	 {"yall", library_yall_pl, &library_yall_pl_len},

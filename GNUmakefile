@@ -444,6 +444,7 @@ LIBOBJECTS +=  \
 	library/filesex.o \
 	library/time.o \
 	library/tty.o \
+	library/prolog_format.o \
 	library/ugraphs.o \
 	library/uri.o \
 	library/url.o \

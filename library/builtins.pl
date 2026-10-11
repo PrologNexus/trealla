@@ -184,6 +184,48 @@ nb_setval(K, V) :- '$gvar_put'(K, '$bb'(V), false).
 b_getval(K, V) :- '$gvar_get'(K, '$bb'(V)).
 nb_getval(K, V) :- '$gvar_get'(K, '$bb'(V)).
 
+:- help(nb_current(?atom,?term), [iso(false)]).
+:- help(nb_delete(+atom), [iso(false)]).
+
+nb_current(K, V) :-
+	(	atom(K) -> catch('$gvar_get'(K, '$bb'(V)), error(existence_error(_, _), _), fail)
+	;	var(K) -> '$gvar_keys'(Ks),
+		member(K, Ks),
+		'$gvar_get'(K, '$bb'(V))
+	;	throw(error(type_error(atom, K), nb_current/2))
+	).
+
+nb_delete(K) :- '$gvar_del'(K).
+
+% SWI's, though with no compound of arity zero here, f() being a syntax error.
+
+:- help(compound_name_arity(?compound,?atomic,?integer), [iso(false)]).
+:- help(compound_name_arguments(?compound,?atomic,?list), [iso(false)]).
+
+compound_name_arity(C, N, A) :-
+	(	nonvar(C) -> must_be(C, compound, compound_name_arity/3, _), functor(C, N, A)
+	;	must_be(N, atomic, compound_name_arity/3, _),
+		must_be(A, integer, compound_name_arity/3, _),
+		(	A > 0 -> functor(C, N, A)
+		;	throw(error(domain_error(not_less_than_one, A), compound_name_arity/3))
+		)
+	).
+
+compound_name_arguments(C, N, Args) :-
+	(	nonvar(C) -> must_be(C, compound, compound_name_arguments/3, _), C =.. [N|Args]
+	;	must_be(N, atomic, compound_name_arguments/3, _),
+		must_be(Args, list, compound_name_arguments/3, _),
+		(	Args = [_|_] -> C =.. [N|Args]
+		;	throw(error(domain_error(non_empty_list, Args), compound_name_arguments/3))
+		)
+	).
+
+:- help(=@=(+term,+term), [iso(false)]).
+:- help(\=@=(+term,+term), [iso(false)]).
+
+A =@= B :- variant(A, B).
+A \=@= B :- \+ variant(A, B).
+
 bb_update(K, O, N) :-
 	'$bb_update'(K, '$bb'(O), '$bb'(N)).
 
@@ -201,7 +243,7 @@ read_from_chars(Cs, T) :-
 :- help(read_from_chars(+chars,?term), [iso(false)]).
 
 predicate_property(P, A) :-
-	nonvar(P), atom(A), !,
+	nonvar(P), atom(A), \+ '$derived_property'(A), A \== iso, !,
 	must_be(P, callable, predicate_property/2, _),
 	'$legacy_predicate_property'(P, A).
 predicate_property(P, A) :-
@@ -213,7 +255,8 @@ predicate_property(P, A) :-
 			discontiguous,private,static,
 			dynamic,foreign,multifile,thread_local,
 			meta_predicate(_),imported_from(_),template(_),
-			iso,visible,tabled
+			iso,visible,tabled,
+			defined,interpreted,number_of_clauses(_),number_of_rules(_)
 			],
 			( memberchk(A, Controls) ->
 				true
@@ -222,10 +265,47 @@ predicate_property(P, A) :-
 		)
 	),
 	must_be(P, callable, predicate_property/2, _),
-	(	P = (M:P2) ->
-		functor(P2, N, Ar), M:'$predicate_property'(N/Ar, predicate, A)
-	;	functor(P, N, Ar), '$predicate_property'(N/Ar, predicate, A)
+	(	var(A) ->
+		(	'$recorded_property'(P, A)
+		;	'$derived_property'(A), '$derived_property'(A, P)
+		)
+	;	'$derived_property'(A) -> '$derived_property'(A, P)
+	;	'$recorded_property'(P, A)
 	).
+
+'$recorded_property'(M:P, A) :- !,
+	functor(P, N, Ar), M:'$predicate_property'(N/Ar, predicate, A).
+'$recorded_property'(P, A) :-
+	functor(P, N, Ar), '$predicate_property'(N/Ar, predicate, A).
+
+% Properties worked out from the predicate itself rather than recorded.
+
+'$derived_property'(defined).
+'$derived_property'(interpreted).
+'$derived_property'(number_of_clauses(_)).
+'$derived_property'(number_of_rules(_)).
+
+'$derived_property'(defined, P) :-
+	once((	'$legacy_predicate_property'(P, built_in)
+		;	'$predicate_home'(P, H), '$predicate_counts'(H, _, _)
+		;	'$legacy_predicate_property'(P, multifile)
+		)).
+'$derived_property'(interpreted, P) :-
+	'$predicate_home'(P, H),
+	'$predicate_counts'(H, _, _), !.
+'$derived_property'(number_of_clauses(N), P) :-
+	'$predicate_home'(P, H),
+	'$predicate_counts'(H, N, _).
+'$derived_property'(number_of_rules(N), P) :-
+	'$predicate_home'(P, H),
+	'$predicate_counts'(H, _, N).
+
+% The module that defines P, if imported, else the one it was asked in.
+
+'$predicate_home'(M:P, H) :- !,
+	(	predicate_property(M:P, imported_from(M2)) -> H = M2:P ; H = M:P ).
+'$predicate_home'(P, H) :-
+	(	predicate_property(P, imported_from(M2)) -> H = M2:P ; H = P ).
 
 :- help(evaluable_property(+callable,+term), [iso(true)]).
 

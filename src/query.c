@@ -2991,7 +2991,7 @@ bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body,
 			bool found = false;
 
 			if (get_builtin_term(m ? m : q->st.m, p1, &found, NULL), found) {
-				if (is_retract != DO_CLAUSE)
+				if ((is_retract != DO_CLAUSE) && (is_retract != DO_CLAUSE_STATIC))
 					return throw_error(q, p1, p1_ctx, "permission_error", "modify,static_procedure");
 				else
 					return throw_error(q, p1, p1_ctx, "permission_error", "access,private_procedure");
@@ -3006,7 +3006,7 @@ bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body,
 			pr = pr->alias;
 		}
 
-		if (!pr->is_dynamic) {
+		if (!pr->is_dynamic && (is_retract != DO_CLAUSE_STATIC)) {
 			if (is_retract == DO_CLAUSE)
 				return throw_error(q, p1, p1_ctx, "permission_error", "access,private_procedure");
 
@@ -3057,7 +3057,7 @@ bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body,
 
 		cell *tmp;
 
-		if ((is_retract != DO_CLAUSE) && cl->is_purgeable) {
+		if ((is_retract != DO_CLAUSE) && (is_retract != DO_CLAUSE_STATIC) && cl->is_purgeable) {
 			tmp = c;
 		} else {
 			tmp = import_term(q, c, q->st.cur_ctx);

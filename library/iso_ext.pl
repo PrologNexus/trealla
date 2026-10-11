@@ -319,6 +319,30 @@ expand_term(T, X) :-
 expand_term(T, X) :-
 	expand_term_dcg(T, X).
 
+% expand_goal/2: user:goal_expansion/2 until it no longer applies, through
+% the control constructs. The depth bound stops an expansion that loops.
+
+:- help(expand_goal(+callable,-callable), [iso(false)]).
+
+expand_goal(G, X) :-
+	'$expand_goal'(G, X, 0).
+
+'$expand_goal'(G, X, _) :- var(G), !, X = G.
+'$expand_goal'((A,B), (X,Y), D) :- !, '$expand_goal'(A, X, D), '$expand_goal'(B, Y, D).
+'$expand_goal'((A;B), (X;Y), D) :- !, '$expand_goal'(A, X, D), '$expand_goal'(B, Y, D).
+'$expand_goal'((A->B), (X->Y), D) :- !, '$expand_goal'(A, X, D), '$expand_goal'(B, Y, D).
+'$expand_goal'((A*->B), (X*->Y), D) :- !, '$expand_goal'(A, X, D), '$expand_goal'(B, Y, D).
+'$expand_goal'(\+A, \+X, D) :- !, '$expand_goal'(A, X, D).
+'$expand_goal'(G, X, D) :-
+	D < 100,
+	predicate_property(user:goal_expansion(_, _), defined),
+	user:goal_expansion(G, G1),
+	G1 \== G,
+	!,
+	D1 is D + 1,
+	'$expand_goal'(G1, X, D1).
+'$expand_goal'(G, G, _).
+
 % A list result has each element translated, as when consulting.
 
 expand_term_dcg(T, X) :- var(T), !, X = T.
