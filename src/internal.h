@@ -1057,6 +1057,10 @@ struct query_ {
 	pl_ctx dump_var_cell_ctx;
 
 	uint64_t total_goals, total_backtracks, total_retries, total_matches, total_inferences;
+	uint64_t inference_limit;				// call_with_inference_limit/3's, against total_goals; 0 for none
+	uint64_t stack_limit;					// thread_create/3's stack_limit(Bytes); 0 for none
+	bool stack_over;						// set when growth went past stack_limit, for the engine to throw
+	bool goal_trap;							// either of the two above armed: one test per goal while neither is
 	uint64_t total_tcos, total_recovs, total_matched, total_no_recovs;
 	pl_idx hw_frames, hw_choices, hw_trails, hw_slots, hw_heap;	// highwater marks, for statistics
 	uint64_t step, qid, tmo_msecs, chgen, cycle_error;

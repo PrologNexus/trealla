@@ -1163,6 +1163,7 @@ static bool bif_thread_create_3(query *q)
 	cell *alias = NULL, *at_exit_goal = NULL;
 	pl_ctx at_exit_goal_ctx = 0;
 	bool is_detached = false;
+	uint64_t stack_limit = 0;
 	PROLOG_LIST_HANDLER(p3);
 
 	while (is_list(p3)) {
@@ -1213,6 +1214,17 @@ static bool bif_thread_create_3(query *q)
 
 			if (name->val_off == g_true_s)
 				is_detached = true;
+		} else if (!CMP_STRING_TO_CSTR(q, c, "stack_limit")) {
+			if (is_var(name))
+				return throw_error(q, name, name_ctx, "instantiation_error", "thread_option");
+
+			if (!is_integer(name))
+				return throw_error(q, name, name_ctx, "type_error", "integer");
+
+			if (is_negative(name))
+				return throw_error(q, name, name_ctx, "domain_error", "not_less_than_zero");
+
+			stack_limit = is_smallint(name) ? (uint64_t)get_smallint(name) : 0;	// a bigint is no limit to speak of
 		} else
 			return throw_error(q, c, c_ctx, "domain_error", "thread_option");
 
@@ -1255,6 +1267,7 @@ static bool bif_thread_create_3(query *q)
 	CHECKED(t->q);
 	t->q->thread_ptr = t;
 	t->q->my_chan = n;
+	t->q->stack_limit = stack_limit;
 	cell *tmp2 = TPL_calloc(1+tmp->num_cells+1+1, sizeof(cell));
 	CHECKED(tmp2);
 	pl_idx num_cells = 0;

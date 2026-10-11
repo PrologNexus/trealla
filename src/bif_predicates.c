@@ -3941,6 +3941,12 @@ static bool bif_statistics_2(query *q)
 		return unify(q, p2, p2_ctx, l, q->st.cur_ctx);
 	}
 
+	if (!CMP_STRING_TO_CSTR(q, p1, "inferences") && is_var(p2)) {
+		cell tmp;
+		make_int(&tmp, (pl_int)q->total_goals);
+		return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+	}
+
 	if (!CMP_STRING_TO_CSTR(q, p1, "frames") && is_var(p2)) {
 		cell tmp;
 		make_int(&tmp, q->st.fp);
@@ -4932,6 +4938,87 @@ static bool bif_sys_flag_cas_3(query *q)
 	*val = v;
 	sl_set(q->pl->flagtab, k, val);
 	prolog_unlock(q->pl);
+	return true;
+}
+
+// The goal count call_with_inference_limit/3 limits, and the limit in force.
+
+static bool bif_sys_inferences_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	cell tmp;
+	make_int(&tmp, (pl_int)q->total_goals);
+	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
+}
+
+static bool bif_sys_inference_limit_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	cell tmp;
+	make_int(&tmp, (pl_int)q->inference_limit);
+	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$start_inference_limit'(+Limit, +Old, -New): count from here, just as
+// the goal starts, with room for the goals call_with_inference_limit/3
+// itself runs after the goal exits, and never past an outer limit.
+
+#define INFERENCE_LIMIT_TAIL 20
+
+static bool bif_sys_start_inference_limit_3(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	GET_NEXT_ARG(p2,integer);
+	GET_NEXT_ARG(p3,var);
+	uint64_t limit = q->total_goals + (uint64_t)get_smallint(p1) + INFERENCE_LIMIT_TAIL;
+	uint64_t old = (uint64_t)get_smallint(p2);
+
+	if (old && (old < limit))
+		limit = old;
+
+	q->inference_limit = limit;
+	q->goal_trap = q->inference_limit || q->stack_over;
+	cell tmp;
+	make_int(&tmp, (pl_int)limit);
+	return unify(q, p3, p3_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$pause_inference_limit'(+Old, -Rest): the goal has exited, so stop
+// charging it, put the outer limit back, and keep what it has left for a retry.
+
+static bool bif_sys_pause_inference_limit_2(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	GET_NEXT_ARG(p2,var);
+	uint64_t rest = q->inference_limit > q->total_goals ? q->inference_limit - q->total_goals : 0;
+	q->inference_limit = (uint64_t)get_smallint(p1);
+	q->goal_trap = q->inference_limit || q->stack_over;
+	cell tmp;
+	make_int(&tmp, (pl_int)rest);
+	return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$restore_inference_limit'(+Old): after an inner limit was exceeded, an
+// outer one already passed gets the same room, so its own wrapper can finish.
+
+static bool bif_sys_restore_inference_limit_1(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	uint64_t old = (uint64_t)get_smallint(p1);
+
+	if (old && (old < q->total_goals + INFERENCE_LIMIT_TAIL))
+		old = q->total_goals + INFERENCE_LIMIT_TAIL;
+
+	q->inference_limit = old;
+	q->goal_trap = q->inference_limit || q->stack_over;
+	return true;
+}
+
+static bool bif_sys_set_inference_limit_1(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	q->inference_limit = is_smallint(p1) && (get_smallint(p1) > 0) ? (uint64_t)get_smallint(p1) : 0;
+	q->goal_trap = q->inference_limit || q->stack_over;
 	return true;
 }
 
@@ -7540,6 +7627,12 @@ builtins g_other_bifs[] =
 	{"string_length", 2, bif_string_length_2, "+string,?integer", false, false, BLAH},
 	{"crypto_n_random_bytes", 2, bif_crypto_n_random_bytes_2, "+integer,-codes", false, false, BLAH},
 	{"$flag_get", 2, bif_sys_flag_get_2, "+term,-number", false, false, BLAH},
+	{"$inferences", 1, bif_sys_inferences_1, "-integer", false, false, BLAH},
+	{"$inference_limit", 1, bif_sys_inference_limit_1, "-integer", false, false, BLAH},
+	{"$set_inference_limit", 1, bif_sys_set_inference_limit_1, "+integer", false, false, BLAH},
+	{"$start_inference_limit", 3, bif_sys_start_inference_limit_3, "+integer,+integer,-integer", false, false, BLAH},
+	{"$pause_inference_limit", 2, bif_sys_pause_inference_limit_2, "+integer,-integer", false, false, BLAH},
+	{"$restore_inference_limit", 1, bif_sys_restore_inference_limit_1, "+integer", false, false, BLAH},
 	{"$flag_cas", 3, bif_sys_flag_cas_3, "+term,+number,+number", false, false, BLAH},
 	{"cyclic_term", 1, bif_cyclic_term_1, "+term", false, false, BLAH},
 	{"load_text", 2, bif_load_text_2, "+string,+list", false, false, BLAH},

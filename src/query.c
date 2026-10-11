@@ -313,6 +313,24 @@ static void free_slot_pages(slot_page *a)
 	}
 }
 
+// What the query has in use, against a thread's stack_limit(Bytes). It is
+// worked out only when an area takes a new page, which is rare, and the
+// engine throws on its next goal, where a throw is safe.
+
+void check_stack_limit(query *q)
+{
+	if (!q->stack_limit)
+		return;
+
+	size_t slots = q->st.sp_page ? q->st.sp_page->base + (size_t)(q->st.sp - q->st.sp_page->slots) : 0;
+	size_t cells = q->heap_pages ? q->heap_pages->base + q->st.hp : 0;
+	size_t used = (size_t)q->st.fp * sizeof(frame) + (size_t)q->st.cp * sizeof(choice)
+		+ (size_t)q->st.tp * sizeof(trail) + slots * sizeof(slot) + cells * sizeof(cell);
+
+	if (used > q->stack_limit)
+		q->stack_over = q->goal_trap = true;
+}
+
 void check_pressure(query *q)
 {
 #if REDUCE_PRESSURE
@@ -372,6 +390,7 @@ static bool check_choice(query *q)
 
 	q->choice_current = a;
 	q->choice_next = a->entries;
+	check_stack_limit(q);
 	return true;
 }
 
@@ -405,6 +424,7 @@ bool check_frame(query *q, unsigned max_vars)
 			frames[i].slots = frames[i].ovf = q->slot_pages->slots;
 
 		q->frame_pages[page_idx] = frames;
+		check_stack_limit(q);
 	}
 
 	frame *f = GET_NEW_FRAME();
@@ -444,6 +464,7 @@ static bool next_slot_page(query *q, unsigned cnt)
 	b->base = a->base + a->used;
 	q->st.sp_page = b;
 	q->st.sp = b->slots;
+	check_stack_limit(q);
 	return true;
 }
 
@@ -576,6 +597,7 @@ bool check_trail(query *q)
 
 	q->trail_current = a;
 	q->trail_next = a->entries;
+	check_stack_limit(q);
 	return true;
 }
 
@@ -3334,6 +3356,38 @@ bool start(query *q)
 		q->cycle_error = q->did_throw = false;
 		q->total_goals++;
 
+		// A thread's stack_limit passed, or call_with_inference_limit/3's
+		// limit reached. Each is cleared before its throw, so the handler
+		// runs unlimited; call_with_inference_limit/3 puts back the next
+		// limit out. One test per goal while neither is armed.
+
+		if (q->goal_trap) {
+			const char *ball = NULL;
+
+			if (q->stack_over) {
+				q->stack_over = false;
+				ball = "error(resource_error(stack),stack_limit)";
+			} else if (q->inference_limit && (q->total_goals > q->inference_limit)) {
+				q->inference_limit = 0;
+				ball = "'$inference_limit_exceeded'";
+			}
+
+			q->goal_trap = q->stack_over || q->inference_limit;
+
+			if (ball) {
+				q->did_throw = true;
+				find_exception_handler(q, (char*)ball);
+
+				if (q->abort && !q->error)
+					break;
+
+				if (q->st.instr)
+					proceed(q);
+
+				goto MORE;
+			}
+		}
+
 		if (is_builtin(q->st.instr)) {
 			q->total_inferences++;
 			bool status;
@@ -3373,6 +3427,7 @@ bool start(query *q)
 
 			if (!(q->total_goals % YIELD_INTERVAL)) {
 				check_pressure(q);
+				check_stack_limit(q);
 
 				if (q->yield_at && !q->run_hook) {
 					uint64_t now = wall_time_in_usec() / 1000;

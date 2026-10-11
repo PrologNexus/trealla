@@ -88,6 +88,45 @@ bb_get(K, T) :-
 bb_delete(K, T) :-
 	'$bb_delete'(K, '$bb'(T)).
 
+% call_with_inference_limit/3 as SWI has it: Result is ! for a deterministic
+% success, true with choicepoints left, inference_limit_exceeded when the
+% limit is hit, which the innermost call reports. A limit set inside another
+% is the smaller of the two; the outer one is back on exit, failure, an
+% exception, and the goal's own again when it is retried.
+
+:- help(call_with_inference_limit(:callable,+integer,-term), [iso(false)]).
+:- meta_predicate(call_with_inference_limit(0,+,-)).
+
+call_with_inference_limit(G, L, R) :-
+	must_be(L, integer, call_with_inference_limit/3, _),
+	(	L < 0 ->
+		throw(error(domain_error(not_less_than_zero, L), call_with_inference_limit/3))
+	;	L =:= 0 ->
+		R = inference_limit_exceeded
+	;	'$inference_limit'(Old),
+		catch('$cwil'(G, L, Old, R), E, '$cwil_caught'(E, Old, R))
+	).
+
+% G is charged only for its own goals: the count starts inside
+% call_cleanup/2 right before G, pauses when G exits, keeping what is left,
+% and resumes with that if G is retried.
+
+'$cwil'(G, L, Old, R) :-
+	(	call_cleanup(('$start_inference_limit'(L, Old, _), G), Det = true),
+		'$pause_inference_limit'(Old, Rest)
+	;	'$set_inference_limit'(Old), fail
+	),
+	(	Det == true ->
+		!, R = !
+	;	(	R = true
+		;	'$start_inference_limit'(Rest, Old, _), fail
+		)
+	).
+
+'$cwil_caught'(E, Old, R) :-
+	'$restore_inference_limit'(Old),
+	(	E == '$inference_limit_exceeded' -> R = inference_limit_exceeded ; throw(E) ).
+
 % flag/3 as SWI has it. New is an atom or is evaluated; '$flag_cas' only
 % sets it if no other thread got in first, else this retries from a fresh read.
 

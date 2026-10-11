@@ -1,0 +1,4 @@
+caught(resource_error(stack),true)
+uncaught(resource_error(stack))
+within(true)
+type_error(integer,foo)
