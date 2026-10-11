@@ -6072,8 +6072,8 @@ static bool bif_sys_predicate_property_2(query *q)
 static bool bif_sys_predicate_counts_3(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
-	GET_NEXT_ARG(p2,var);
-	GET_NEXT_ARG(p3,var);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,any);
 	module *m = q->st.m;
 
 	if ((p1->val_off == g_colon_s) && (get_arity(p1) == 2)) {
@@ -6665,15 +6665,31 @@ static bool bif_strip_module_3(query *q)
 	GET_NEXT_ARG(p2,atom_or_var);
 	GET_NEXT_ARG(p3,any);
 
-	if (p1->val_off == g_colon_s) {
+	if ((p1->val_off == g_colon_s) && (get_arity(p1) == 2)) {
 		cell *cm = deref(q, p1+1, p1_ctx);
 		pl_ctx cm_ctx = q->latest_ctx;
+		cell *ct = deref(q, p1+2, p1_ctx);
+		pl_ctx ct_ctx = q->latest_ctx;
+
+		// As in SWI, the innermost of nested qualifications: a:b:c is b and c.
+
+		while (is_atom(cm) && (ct->val_off == g_colon_s) && (get_arity(ct) == 2)) {
+			cell *ct2 = ct;
+			pl_ctx ct2_ctx = ct_ctx;
+			cell *cm2 = deref(q, ct2+1, ct2_ctx);
+
+			if (!is_atom(cm2))
+				break;
+
+			cm = cm2;
+			cm_ctx = q->latest_ctx;
+			ct = deref(q, ct2+2, ct2_ctx);
+			ct_ctx = q->latest_ctx;
+		}
 
 		if (!unify(q, p2, p2_ctx, cm, cm_ctx))
 			return false;
 
-		cell *ct = deref(q, p1+2, p1_ctx);
-		pl_ctx ct_ctx = q->latest_ctx;
 		return unify(q, p3, p3_ctx, ct, ct_ctx);
 	}
 
@@ -7731,7 +7747,7 @@ builtins g_other_bifs[] =
 	{"$counter", 1, bif_sys_counter_1, NULL, false, false, BLAH},
 	{"$legacy_current_prolog_flag", 2, bif_sys_current_prolog_flag_2, "+atom,?term", true, false, BLAH},
 	{"$legacy_predicate_property", 2, bif_sys_predicate_property_2, "+callable,?string", false, false, BLAH},
-	{"$predicate_counts", 3, bif_sys_predicate_counts_3, "+callable,-integer,-integer", false, false, BLAH},
+	{"$predicate_counts", 3, bif_sys_predicate_counts_3, "+callable,?integer,?integer", false, false, BLAH},
 	{"$legacy_evaluable_property", 2, bif_sys_evaluable_property_2, "+callable,?string", false, false, BLAH},
 	{"$det_length_rundown", 2, bif_sys_det_length_rundown_2, "?list,+integer", false, false, BLAH},
 	{"$memberchk", 3, bif_sys_memberchk_3, "?term,?list,-term", false, false, BLAH},

@@ -2400,8 +2400,9 @@ static bool expand_meta_predicate(query *q, predicate *pr)
 
 	for (cell *k = q->st.key+1, *m = pr->meta_args+1; arity--; k += k->num_cells, m += m->num_cells) {
 		cell *k0 = deref(q, k, q->st.key_ctx);
+		pl_ctx k0_ctx = q->latest_ctx;
 
-		if ((get_arity(k0) == 2) && (k0->val_off == g_colon_s) && is_atom(FIRST_ARG(k0)))
+		if ((get_arity(k0) == 2) && (k0->val_off == g_colon_s) && is_atom(deref(q, FIRST_ARG(k0), k0_ctx)))
 			;
 		else if (!is_interned(k0) || is_iso_list(k0))
 			;
