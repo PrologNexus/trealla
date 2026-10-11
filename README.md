@@ -543,7 +543,7 @@ existence error.
 	evaluable_property/2
 	numbervars/[1,3-4]
 	e/0
-	name/2
+	name/2						# name(?atomic,?list), for SWI-Prolog compatibility
 	tab/[1,2]
 
 	get_unbuffered_code/1		# read a single unbuffered code
