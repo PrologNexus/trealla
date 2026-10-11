@@ -503,8 +503,8 @@ an instantiation error for one.
 *load_files/2* does with *sandboxed(true)*: the source is *string(Text)*,
 *stream(S)* or *terms(List)*. A clause must be for that module and not a
 system predicate, and has its body guarded. A directive may declare the
-module's own predicates dynamic, discontiguous, multifile and so on, add
-an operator not yet defined (operators are global here), set a flag
+module's own predicates dynamic, discontiguous, multifile and so on,
+declare an operator, which stays the module's own, set a flag
 *sandbox:safe_prolog_flag/2* allows, load a library by a relative path,
 or be a goal *safe_call/1* runs; *sandbox:safe_directive/1* allows more.
 *initialization/1* goals run once the rest is loaded, and then each clause

@@ -972,8 +972,8 @@ safe_prolog_flag(unknown, _).
 %	- a clause must be for Module and not a system predicate, and has
 %	  its body guarded as by safe_guard/2;
 %	- a directive is one of dynamic/discontiguous/multifile/public/
-%	  meta_predicate/table/thread_local for Module's own predicates, op/3
-%	  for a name not yet an operator (operators are global here),
+%	  meta_predicate/table/thread_local for Module's own predicates, op/3,
+%	  as Module's operators are its own unless it exports them,
 %	  set_prolog_flag/2 for a safe_prolog_flag/2, use_module/1,2 or
 %	  ensure_loaded/1 of a library by a relative path, one the
 %	  safe_directive/1 hook allows, or else a goal run by safe_call/1;
@@ -1152,11 +1152,10 @@ safe_pattr(_, _, _).
 
 safe_op_names(Name) :-
 	atom(Name),
-	!,
-	\+ current_op(_, _, Name).
+	!.
 safe_op_names(Names) :-
 	is_list(Names),
-	forall(member(Name, Names), (atom(Name), \+ current_op(_, _, Name))).
+	forall(member(Name, Names), atom(Name)).
 
 directive_loads_file(use_module(library(X)), X).
 directive_loads_file(use_module(library(X), _), X).
