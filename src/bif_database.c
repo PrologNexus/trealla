@@ -27,6 +27,11 @@ static bool module_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, boo
 				return false;
 			}
 
+			if (!is_atom(cm)) {
+				*status = throw_error(q, cm, q->latest_ctx, "type_error", "module");
+				return false;
+			}
+
 			module *m = find_module(q->pl, C_STR(q, cm));
 
 			if (!m) {
@@ -299,6 +304,11 @@ static bool rule_head_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, 
 
 	if (is_var(cm)) {
 		*status = throw_error(q, cm, q->latest_ctx, "instantiation_error", "module");
+		return false;
+	}
+
+	if (!is_atom(cm)) {
+		*status = throw_error(q, cm, q->latest_ctx, "type_error", "module");
 		return false;
 	}
 
@@ -679,6 +689,17 @@ static bool bif_iso_abolish_1(query *q)
 	return ok;
 }
 
+// The module of a qualified head when it isn't an atom, else NULL.
+
+static cell *bad_db_module(query *q, cell *head, pl_ctx head_ctx)
+{
+	if (!is_interned(head) || (head->val_off != g_colon_s) || (get_arity(head) != 2))
+		return NULL;
+
+	cell *cm = deref(q, FIRST_ARG(head), head_ctx);
+	return is_atom(cm) ? NULL : cm;
+}
+
 static cell *get_db_head(cell *head)
 {
 	if (is_interned(head) && (head->val_off == g_colon_s) && (get_arity(head) == 2)) {
@@ -703,6 +724,11 @@ static bool bif_iso_asserta_1(query *q)
 
 	if (!is_interned(head) && !is_cstring(head))
 		return throw_error(q, head, q->st.cur_ctx, "type_error", "callable");
+
+	cell *bad_m = bad_db_module(q, head, q->st.cur_ctx);
+
+	if (bad_m)
+		return throw_error(q, bad_m, q->st.cur_ctx, is_var(bad_m) ? "instantiation_error" : "type_error", "module");
 
 	cell *db_head = get_db_head(head);
 
@@ -784,6 +810,11 @@ static bool do_assertz_1(query *q)
 	if (!is_interned(head) && !is_cstring(head))
 		return throw_error(q, head, q->st.cur_ctx, "type_error", "callable");
 
+	cell *bad_m = bad_db_module(q, head, q->st.cur_ctx);
+
+	if (bad_m)
+		return throw_error(q, bad_m, q->st.cur_ctx, is_var(bad_m) ? "instantiation_error" : "type_error", "module");
+
 	cell *db_head = get_db_head(head);
 
 	if (is_callable(db_head) && (get_arity(db_head) > MAX_PROCEDURE_ARITY))
@@ -861,6 +892,11 @@ static bool do_asserta_2(query *q)
 
 	if (is_var(head))
 		return throw_error(q, head, q->latest_ctx, "instantiation_error", "args_not_sufficiently_instantiated");
+
+	cell *bad_m = bad_db_module(q, head, q->latest_ctx);
+
+	if (bad_m)
+		return throw_error(q, bad_m, q->latest_ctx, is_var(bad_m) ? "instantiation_error" : "type_error", "module");
 
 	cell *db_head = get_db_head(head);
 
@@ -962,6 +998,11 @@ static bool do_assertz_2(query *q)
 
 	if (is_var(head))
 		return throw_error(q, head, q->latest_ctx, "instantiation_error", "args_not_sufficiently_instantiated");
+
+	cell *bad_m = bad_db_module(q, head, q->latest_ctx);
+
+	if (bad_m)
+		return throw_error(q, bad_m, q->latest_ctx, is_var(bad_m) ? "instantiation_error" : "type_error", "module");
 
 	cell *db_head = get_db_head(head);
 
@@ -1352,6 +1393,10 @@ static bool bif_listing_1(query *q)
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
+
+		if (!is_atom(cm))
+			return throw_error(q, cm, p1_ctx, is_var(cm) ? "instantiation_error" : "type_error", "module");
+
 		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
@@ -1410,6 +1455,10 @@ static bool bif_sys_xlisting_1(query *q)
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
+
+		if (!is_atom(cm))
+			return throw_error(q, cm, p1_ctx, is_var(cm) ? "instantiation_error" : "type_error", "module");
+
 		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
@@ -1480,6 +1529,10 @@ static bool bif_sys_dlisting_1(query *q)
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
+
+		if (!is_atom(cm))
+			return throw_error(q, cm, p1_ctx, is_var(cm) ? "instantiation_error" : "type_error", "module");
+
 		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
