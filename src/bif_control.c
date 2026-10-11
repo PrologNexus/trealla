@@ -1586,7 +1586,7 @@ bool throw_error3(query *q, cell *c, pl_ctx c_ctx, const char *err_type, const c
 		SET_OP(tmp+num_cells, OP_YFX); num_cells++;
 		make_atom(tmp+num_cells++, new_atom(q->pl, functor));
 		make_int(tmp+num_cells, !is_string(goal)?get_arity(goal):0);
-	} else if (!strcmp(err_type, "permission_error") && is_compound(c) && CMP_STRING_TO_CSTR(q, c, "/") && is_var(FIRST_ARG(c))) {
+	} else if (!strcmp(err_type, "permission_error") && is_compound(c) && CMP_STRING_TO_CSTR(q, c, "/") && (c->num_cells > 1) && is_var(FIRST_ARG(c))) {
 		//printf("error(%s(%s,(%s)/%u),(%s)/%u).\n", err_type, expected, tmpbuf, get_arity(c), functor, get_arity(goal));
 		tmp = alloc_heap(q, 9+extra);
 		CHECKED(tmp);
