@@ -345,6 +345,15 @@ predicate *thread_local_shadow(predicate *pr)
 
 	module *m = pr->m;
 	thread *t = current_thread(m->pl);
+
+	// Its own, seen before and not since abolished: only this thread
+	// touches its list.
+
+	for (unsigned i = 0; i < t->tl_shadows_n; i++) {
+		if ((t->tl_origs[i] == pr) && !t->tl_shadows[i]->is_abolished)
+			return t->tl_shadows[i];
+	}
+
 	char name[1024];
 	snprintf(name, sizeof(name), "$tl:%u:%s", (unsigned)t->chan, C_STR(m, &pr->key));
 	cell key = (cell){0};
@@ -361,25 +370,24 @@ predicate *thread_local_shadow(predicate *pr)
 	if (!sh && (sh = create_predicate(m, &key, NULL)) != NULL)
 		sh->is_dynamic = true;
 
-	bool known = false;
-
-	for (unsigned i = 0; sh && (i < t->tl_shadows_n) && !known; i++)
-		known = t->tl_shadows[i] == sh;
-
-	if (sh && !known) {
+	if (sh) {
 		if (t->tl_shadows_n == t->tl_shadows_cap) {
 			unsigned cap = t->tl_shadows_cap ? t->tl_shadows_cap * 2 : 8;
 			predicate **a = TPL_realloc(t->tl_shadows, sizeof(predicate*) * cap);
+			predicate **b = a ? TPL_realloc(t->tl_origs, sizeof(predicate*) * cap) : NULL;
 
-			if (!a) {
+			if (a) t->tl_shadows = a;
+			if (b) t->tl_origs = b;
+
+			if (!a || !b) {
 				prolog_unlock_mod(m->pl, m);
 				return NULL;
 			}
 
-			t->tl_shadows = a;
 			t->tl_shadows_cap = cap;
 		}
 
+		t->tl_origs[t->tl_shadows_n] = pr;
 		t->tl_shadows[t->tl_shadows_n++] = sh;
 	}
 

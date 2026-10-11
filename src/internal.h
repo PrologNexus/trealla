@@ -914,7 +914,7 @@ struct thread_ {
 	pl_atomic bool cancel_requested;		// thread_cancel/1: a blocking wait gives up and the thread exits
 	skiplist *gvars;						// b_setval/nb_setval, this thread's own
 	uint64_t gvar_seq;
-	predicate **tl_shadows;					// this thread's shadows of thread_local/1 predicates
+	predicate **tl_shadows, **tl_origs;		// this thread's shadows of thread_local/1 predicates, and theirs
 	unsigned tl_shadows_n, tl_shadows_cap;
 	volatile int timedout;   // set by SIGALRM handler s_sigfn(); thread-lived
 	bool is_init:1;

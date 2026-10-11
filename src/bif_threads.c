@@ -218,7 +218,8 @@ void thread_local_release(thread *t)
 	}
 
 	TPL_free(t->tl_shadows);
-	t->tl_shadows = NULL;
+	TPL_free(t->tl_origs);
+	t->tl_shadows = t->tl_origs = NULL;
 	t->tl_shadows_n = t->tl_shadows_cap = 0;
 }
 
