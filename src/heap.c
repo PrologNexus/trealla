@@ -784,6 +784,7 @@ cell *alloc_heap(query *q, unsigned num_cells)
 		a->base = a->next ? a->next->base + a->next->idx : 0;
 		q->heap_pages = a;
 		q->st.hp = 0;
+		check_stack_limit(q);
 	}
 
 	cell *c = q->heap_pages->cells + q->st.hp;

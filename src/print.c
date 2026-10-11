@@ -1966,6 +1966,15 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 	if (rhs_is_symbol && strcmp(C_STR(q, rhs), "[]") && strcmp(C_STR(q, rhs), "{}") && strcmp(C_STR(q, rhs), "!"))
 		space = true;
 
+	// A symbolic functor in functional notation, as a:(>>)(b,c,d) prints,
+	// would otherwise run into the operator: a:>>(b,c,d) reads as a :>> ...
+
+	if (is_interned(rhs) && get_arity(rhs) && ((get_arity(rhs) > 2) || !is_op(rhs)) && !is_iso_list(rhs)
+		&& !iswalpha(peek_char_utf8(rhs_src)) && (peek_char_utf8(rhs_src) != '{')
+		&& (peek_char_utf8(rhs_src) != '[')
+		&& !needs_quoting(q->st.m, C_STR(q, rhs), C_STRLEN(q, rhs)))
+		space = true;
+
 	if ((rhs_pri_1 == my_priority) && is_op_xfy)
 		rhs_parens = false;
 

@@ -70,6 +70,29 @@ static bool bif_sys_cleanup_if_det_1(query *q)
 	return true;
 }
 
+// A control construct by its functor, not by the builtin flag, which a
+// goal built as data, say by unifying a clause head (A;B), does not carry.
+
+static bool is_control_goal(const cell *c)
+{
+	return is_interned(c) && (get_arity(c) == 2)
+		&& ((c->val_off == g_conjunction_s) || (c->val_off == g_disjunction_s)
+			|| (c->val_off == g_if_then_s) || (c->val_off == g_soft_cut_s));
+}
+
+// Whether a control construct holds a variable where a goal goes, so it
+// has to be run as a body rebuilt with that variable dereferenced. It only
+// walks the term's own cells, without following bindings, so it ends.
+
+static bool control_has_var(const cell *c)
+{
+	if (!is_control_goal(c))
+		return false;
+
+	const cell *c1 = c + 1, *c2 = c1 + c1->num_cells;
+	return is_var(c1) || is_var(c2) || control_has_var(c1) || control_has_var(c2);
+}
+
 bool call_check(query *q, cell *p1, bool *status, bool calln)
 {
 	cell *save_p1 = p1;
@@ -121,9 +144,26 @@ bool bif_call_0(query *q, cell *p1, pl_ctx p1_ctx)
 			return status;
 	}
 
-	cell *tmp = prepare_call(q, CALL_SKIP, p1, p1_ctx, 3);
-	CHECKED(tmp);
-	pl_idx num_cells = p1->num_cells;
+	// A control construct with a variable in a goal position runs as its
+	// body, rebuilt with that dereferenced now (ISO 7.6.2), so a cut nested
+	// behind it is not hidden in a call.
+
+	cell *tmp;
+	pl_idx num_cells;
+
+	if (control_has_var(p1)) {
+		CHECKED(init_tmp_heap(q));
+		cell *p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
+		tmp = prepare_call_body(q, CALL_SKIP, p1_clone, p1, p1_ctx, 3);
+		CHECKED(tmp);
+		num_cells = tmp->num_cells;
+	} else {
+		tmp = prepare_call(q, CALL_SKIP, p1, p1_ctx, 3);
+		CHECKED(tmp);
+		num_cells = p1->num_cells;
+	}
+
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
 	make_call(q, tmp+num_cells);
@@ -198,6 +238,33 @@ static bool bif_iso_call_n(query *q)
 	return true;
 }
 
+// Prepare a goal checked through clone (NULL if it wasn't): a control
+// construct runs as its body, built from the clone's structure with the
+// original's leaves (see prepare_call_body()), an atom runs the clone that
+// call_check() resolved, and anything else, or a goal that is no longer the
+// one cloned, as M:G is once unwrapped, runs by reference.
+
+static cell *prepare_checked_call(query *q, cell *clone, cell *p1, pl_ctx p1_ctx, unsigned extras, pl_idx *num_cells)
+{
+	cell *tmp;
+
+	if (clone && is_interned(clone) && (get_arity(clone) == 2) && (clone->val_off == p1->val_off)
+		&& (get_arity(p1) == 2)
+		&& ((clone->val_off == g_conjunction_s) || (clone->val_off == g_disjunction_s)
+			|| (clone->val_off == g_if_then_s) || (clone->val_off == g_soft_cut_s))) {
+		tmp = prepare_call_body(q, CALL_NOSKIP, clone, p1, p1_ctx, extras);
+		if (tmp) *num_cells = tmp->num_cells;
+	} else if (clone && !get_arity(clone) && !get_arity(p1)) {
+		tmp = prepare_call(q, CALL_NOSKIP, clone, q->st.cur_ctx, extras);
+		*num_cells = clone->num_cells;
+	} else {
+		tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, extras);
+		*num_cells = p1->num_cells;
+	}
+
+	return tmp;
+}
+
 bool bif_iso_call_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
@@ -222,21 +289,26 @@ bool bif_iso_call_1(query *q)
 			return throw_error(q, p1, p1_ctx, "type_error", "callable");
 	}
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
-		CHECKED(init_tmp_heap(q));
-		p1 = clone_term_to_tmp(q, p1, p1_ctx);
-		CHECKED(p1);
-		bool status;
-		p1_ctx = q->st.cur_ctx;
+	// Check a clone, but run the goal through prepare_checked_call(): the
+	// clone alone holds its own copy of every term a variable was bound to,
+	// so nb_setarg/3 on one would not reach the caller's.
 
-		if (!call_check(q, p1, &status, false))
+	cell *p1_clone = NULL;
+
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
+		CHECKED(init_tmp_heap(q));
+		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
+		bool status;
+
+		if (!call_check(q, p1_clone, &status, false))
 			return status;
 	}
 
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 3);
+	pl_idx num_cells;
+	cell *tmp = prepare_checked_call(q, p1_clone, p1, p1_ctx, 3, &num_cells);
 	CHECKED(tmp);
 	tmp->flags &= ~FLAG_INTERNED_TAIL_CALL;
-	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
 	make_call(q, tmp+num_cells);
@@ -275,21 +347,26 @@ static bool bif_iso_once_1(query *q)
 			return throw_error(q, p1, p1_ctx, "type_error", "callable");
 	}
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
-		CHECKED(init_tmp_heap(q));
-		p1 = clone_term_to_tmp(q, p1, p1_ctx);
-		CHECKED(p1);
-		bool status;
-		p1_ctx = q->st.cur_ctx;
+	// Check a clone, but run the goal through prepare_checked_call(): the
+	// clone alone holds its own copy of every term a variable was bound to,
+	// so nb_setarg/3 on one would not reach the caller's.
 
-		if (!call_check(q, p1, &status, false))
+	cell *p1_clone = NULL;
+
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
+		CHECKED(init_tmp_heap(q));
+		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
+		bool status;
+
+		if (!call_check(q, p1_clone, &status, false))
 			return status;
 	}
 
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 4);
+	pl_idx num_cells;
+	cell *tmp = prepare_checked_call(q, p1_clone, p1, p1_ctx, 4, &num_cells);
 	CHECKED(tmp);
 	tmp->flags &= ~FLAG_INTERNED_TAIL_CALL;
-	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_cut_s, bif_iso_cut_0, 0, 0);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
@@ -309,14 +386,17 @@ static bool bif_ignore_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
+	// As call/1: check a clone, run through prepare_checked_call().
+
+	cell *p1_clone = NULL;
+
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
-		p1 = clone_term_to_tmp(q, p1, p1_ctx);
-		CHECKED(p1);
-		p1_ctx = q->st.cur_ctx;
+		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		CHECKED(p1_clone);
 		bool status;
 
-		if (!call_check(q, p1, &status, false))
+		if (!call_check(q, p1_clone, &status, false))
 			return status;
 	}
 
@@ -340,10 +420,10 @@ static bool bif_ignore_1(query *q)
 			return throw_error(q, p1, p1_ctx, "type_error", "callable");
 	}
 
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, q->st.cur_ctx, 4);
+	pl_idx num_cells;
+	cell *tmp = prepare_checked_call(q, p1_clone, p1, p1_ctx, 4, &num_cells);
 	CHECKED(tmp);
 	tmp->flags &= ~FLAG_INTERNED_TAIL_CALL;
-	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_cut_s, bif_iso_cut_0, 0, 0);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
@@ -394,15 +474,15 @@ bool bif_soft_if_then_2(query *q)
 
 // if -> then ; else
 
-static bool do_if_then_else(query *q, cell *p1, cell *p2, cell *p3)
+static bool do_if_then_else(query *q, cell *p1, cell *p2, pl_ctx p1_ctx)
 {
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, q->st.cur_ctx, 3+p2->num_cells+2);
+	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 3+p2->num_cells+2);
 	CHECKED(tmp);
 	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_cut_s, bif_iso_cut_0, 0, 0);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
-	num_cells += dup_cells_by_ref(tmp+num_cells, p2, q->st.cur_ctx, p2->num_cells);
+	num_cells += dup_cells_by_ref(tmp+num_cells, p2, p1_ctx, p2->num_cells);
 	make_instr(tmp+num_cells++, g_true_s, bif_iso_true_0, 0, 0); // Why???
 	make_call(q, tmp+num_cells);
 	CHECKED(push_barrier(q));
@@ -412,16 +492,16 @@ static bool do_if_then_else(query *q, cell *p1, cell *p2, cell *p3)
 
 // if *-> then ; else
 
-static bool do_soft_if_then_else(query *q, cell *p1, cell *p2, cell *p3)
+static bool do_soft_if_then_else(query *q, cell *p1, cell *p2, pl_ctx p1_ctx)
 {
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, q->st.cur_ctx, 4+p2->num_cells+2);
+	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 4+p2->num_cells+2);
 	CHECKED(tmp);
 	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_sys_cut_s, bif_sys_cut_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
-	num_cells += dup_cells_by_ref(tmp+num_cells, p2, q->st.cur_ctx, p2->num_cells);
+	num_cells += dup_cells_by_ref(tmp+num_cells, p2, p1_ctx, p2->num_cells);
 	make_instr(tmp+num_cells++, g_true_s, bif_iso_true_0, 0, 0); // Why???
 	make_call(q, tmp+num_cells);
 	CHECKED(push_barrier(q));
@@ -443,7 +523,7 @@ static bool bif_if_3(query *q)
 		return true;
 	}
 
-	return do_soft_if_then_else(q, p1, p2, p3);
+	return do_soft_if_then_else(q, p1, p2, q->st.cur_ctx);
 }
 
 // goal ; goal
@@ -455,25 +535,18 @@ static bool bif_iso_disjunction_2(query *q)
 		return true;
 	}
 
-	cell *c = q->st.instr+1;
+	GET_FIRST_ARG(p1,callable);
 
-	if (is_callable(c) && c->bif_ptr) {
-		if (c->bif_ptr->fn == bif_iso_if_then_2) {
-			cell *p1 = c + 1;
-			cell *p2 = p1 + p1->num_cells;
-			cell *p3 = p2 + p2->num_cells;
-			return do_if_then_else(q, p1, p2, p3);
-		}
+	// Deref first: the LHS may be a variable bound to (C -> T) at run time.
 
-		if (c->bif_ptr->fn == bif_soft_if_then_2) {
-			cell *p1 = c + 1;
-			cell *p2 = p1 + p1->num_cells;
-			cell *p3 = p2 + p2->num_cells;
-			return do_soft_if_then_else(q, p1, p2, p3);
-		}
+	if (is_interned(p1) && (get_arity(p1) == 2)) {
+		if (p1->val_off == g_if_then_s)
+			return do_if_then_else(q, p1+1, p1+1+p1[1].num_cells, p1_ctx);
+
+		if (p1->val_off == g_soft_cut_s)
+			return do_soft_if_then_else(q, p1+1, p1+1+p1[1].num_cells, p1_ctx);
 	}
 
-	GET_FIRST_ARG(p1,callable);
 	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 2);
 	CHECKED(tmp);
 	pl_idx num_cells = p1->num_cells;
@@ -490,9 +563,11 @@ static bool bif_iso_negation_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
-	if ((is_builtin(p1) && (get_arity(p1) == 2)) || !get_arity(p1)) {
+	cell *p1_clone = NULL;
+
+	if ((is_builtin(p1) && (get_arity(p1) == 2)) || is_control_goal(p1) || !get_arity(p1)) {
 		CHECKED(init_tmp_heap(q));
-		cell *p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
+		p1_clone = clone_term_to_tmp(q, p1, p1_ctx);
 		CHECKED(p1_clone);
 		bool status;
 
@@ -500,9 +575,9 @@ static bool bif_iso_negation_1(query *q)
 			return status;
 	}
 
-	cell *tmp = prepare_call(q, CALL_NOSKIP, p1, p1_ctx, 5);
+	pl_idx num_cells;
+	cell *tmp = prepare_checked_call(q, p1_clone, p1, p1_ctx, 5, &num_cells);
 	CHECKED(tmp);
-	pl_idx num_cells = p1->num_cells;
 	make_instr(tmp+num_cells++, g_cut_s, bif_iso_cut_0, 0, 0);
 	make_instr(tmp+num_cells++, g_sys_drop_barrier_s, bif_sys_drop_barrier_1, 1, 1);
 	make_uint(tmp+num_cells++, q->st.cp);
@@ -1519,7 +1594,9 @@ bool throw_error3(query *q, cell *c, pl_ctx c_ctx, const char *err_type, const c
 
 	bool is_abolish = false;
 
-	if (!strcmp(C_STR(q, instr), "abolish"))
+	// These take Name/Arity, which their errors report as it is.
+
+	if (!strcmp(C_STR(q, instr), "abolish") || !strcmp(C_STR(q, instr), "thread_local"))
 		is_abolish = true;
 
 	if (!strcmp(C_STR(q, instr), "$call_check"))

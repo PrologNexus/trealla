@@ -25,7 +25,7 @@ bool push_fail_on_retry_with_barrier(query *q);
 bool push_reset_handler(query *q);
 bool push_catcher(query *q, enum q_retry type);
 
-bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
+bool do_retract(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
 bool do_read_term(query *q, stream *str, cell *p1, pl_ctx p1_ctx, cell *p2, pl_ctx p2_ctx, char *src);
 query *query_create_task_rebased(query *q, cell *instr, unsigned num_vars);
 
@@ -74,8 +74,8 @@ void undo_me(query *q);
 int retry_choice(query *q);
 void assign_vars(parser *p, unsigned start, bool rebase);
 bool start(query *q);
-bool match_rule(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
-bool match_clause(query *q, cell *p1, pl_ctx p1_ctx, cell **body, enum clause_type retract);
+bool match_rule(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract);
+bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **body, enum clause_type retract);
 void call_attrs(query *q, cell *attrs);
 bool check_redo(query *q);
 const char *cycle_slot_name(query *q, unsigned n, char tmpbuf[256]);
@@ -85,14 +85,20 @@ bool has_expired_alarm(query *q);
 bool next_alarm_delay(query *q, unsigned *ms);
 bool make_slice(query *q, cell *d, const cell *orig, size_t off, size_t n);
 void check_pressure(query *q);
+void check_stack_limit(query *q);
 cell *prepare_call(query *q, bool noskip, cell *p1, pl_ctx p1_ctx, unsigned extras);
+cell *prepare_call_body(query *q, bool noskip, cell *clone, cell *p1, pl_ctx p1_ctx, unsigned extras);
 bool call_check(query *q, cell *tmp2, bool *status, bool calln);
 bool make_slice(query *q, cell *d, const cell *orig, size_t off, size_t n);
 bool match_head(query *q);
 bool check_frame(query *q, unsigned max_vars);
 
-enum undo_item {UNDO_BBOARD, UNDO_CELLS, UNDO_RULE};
+enum undo_item {UNDO_CELLS, UNDO_RULE};
 bool undo_on_backtrack(query *q, void *v, enum undo_item type);
+bool undo_bb_on_backtrack(query *q, module *m, const char *key);
+bool undo_gvar_on_backtrack(query *q, void *t, const char *key, uint64_t id);
+void gvar_undo(void *t, const char *key, uint64_t id);
+void gvars_destroy(void *t);
 bool undo_mmap_on_backtrack(query *q, void *addr, size_t len);
 void stream_unmap(void *addr, size_t len);
 bool unslice_cells(cell *c, pl_idx num_cells);
@@ -156,6 +162,7 @@ bool print_term(query *q, FILE *fp, cell *c, pl_ctx c_ctx, int running);
 bool print_term_to_stream(query *q, stream *str, cell *c, pl_ctx c_ctx, int running);
 bool find_exception_handler(query *q, char *ball);
 char *print_term_to_strbuf(query *q, cell *c, pl_ctx c_ctx, int running);
+char *portray_term_to_strbuf(query *q, cell *c, pl_ctx c_ctx);
 void clear_write_options(query *q);
 
 // The query's scratch parser, built on first use; NULL if it cannot be.

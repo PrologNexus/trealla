@@ -1,0 +1,11 @@
+t_det: !
+t_nondet: [a-true,b-!]
+t_retry: [true,true,!]
+t_exceeded: inference_limit_exceeded
+t_zero: inference_limit_exceeded
+t_fail: failed
+t_throw: x
+t_inner: inference_limit_exceeded/!
+t_outer: inference_limit_exceeded/!
+t_negative: domain_error(not_less_than_zero,-1)
+t_restored: unlimited_after

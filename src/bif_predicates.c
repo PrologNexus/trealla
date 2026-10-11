@@ -1,9 +1,17 @@
+#if defined(_WIN32)
+#define _CRT_RAND_S				// declares rand_s() in stdlib.h
+#endif
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+#include <sys/random.h>
+#endif
 
 #include "base64.h"
 #include "module.h"
@@ -196,12 +204,26 @@ static bool bif_findnsols_4(query *q)
 			return throw_error(q, p3, p3_ctx, "type_error", "list");
 
 		// Rename template and goal together so the goal's bindings don't show between chunks.
+		// A variable bound to a ground compound is shared instead, as SWI does: the copy
+		// keeps an indirect as it is, so nb_setarg/3 on that term reaches the caller's.
 
 		cell *pair = alloc_heap(q, 1+p1->num_cells+p2->num_cells);
 		CHECKED(pair);
 		make_instr(pair, g_minus_s, NULL, 2, p1->num_cells+p2->num_cells);
 		dup_cells_by_ref(pair+1, p1, p1_ctx, p1->num_cells);
 		dup_cells_by_ref(pair+1+p1->num_cells, p2, p2_ctx, p2->num_cells);
+
+		for (cell *c = pair+1, *end = pair+pair->num_cells; c < end; c++) {
+			if (!is_var(c))
+				continue;
+
+			cell *v = deref(q, c, q->st.cur_ctx);
+			pl_ctx v_ctx = q->latest_ctx;
+
+			if (is_compound(v) && !has_vars(q, v, v_ctx))
+				make_indirect(c, v, v_ctx);
+		}
+
 		cell *copy = copy_term_to_heap(q, pair, q->st.cur_ctx, false);
 		CHECKED(copy);
 		p1 = copy + 1;
@@ -296,6 +318,9 @@ static bool bif_iso_findall_3(query *q)
 		if (is_iso_list(p3) && !check_list(q, p3, p3_ctx, &is_partial, NULL) && !is_partial)
 			return throw_error(q, p3, p3_ctx, "type_error", "list");
 
+		// Check a clone, then run the goal as a body built from it, its
+		// leaves taken from the original: see prepare_call_body().
+
 		CHECKED(init_tmp_heap(q));
 		cell *tmp2 = clone_term_to_tmp(q, p2, p2_ctx);
 		CHECKED(tmp2);
@@ -306,9 +331,9 @@ static bool bif_iso_findall_3(query *q)
 		if (!grab_queuen(q))
 			return throw_error(q, p2, p2_ctx, "resource_error", "max_queues");
 
-		cell *tmp = prepare_call(q, CALL_NOSKIP, tmp2, p2_ctx, 1+p1->num_cells+2);
+		cell *tmp = prepare_call_body(q, CALL_NOSKIP, tmp2, p2, p2_ctx, 1+p1->num_cells+2);
 		CHECKED(tmp, drop_queuen(q));
-		pl_idx num_cells = tmp2->num_cells;
+		pl_idx num_cells = tmp->num_cells;
 		make_instr(tmp+num_cells++, g_sys_queue_s, bif_sys_queue_1, 1, p1->num_cells);
 		num_cells += dup_cells_by_ref(tmp+num_cells, p1, p1_ctx, p1->num_cells);
 		make_instr(tmp+num_cells++, g_fail_s, bif_iso_fail_0, 0, 0);
@@ -2573,11 +2598,17 @@ static bool bif_iso_current_predicate_1(query *q)
 {
 	GET_FIRST_ARG(p_pi,any);
 
-	if (!CMP_STRING_TO_CSTR(q, p_pi, ":")) {
-		module *tmp_m = find_module(q->pl, C_STR(q, p_pi+1));
+	if ((get_arity(p_pi) == 2) && !CMP_STRING_TO_CSTR(q, p_pi, ":")) {
+		cell *cm = deref(q, p_pi+1, p_pi_ctx);
+
+		if (!is_atom(cm))
+			return false;
+
+		module *tmp_m = find_module(q->pl, C_STR(q, cm));
 		if(!tmp_m) return false;
 		q->st.m = tmp_m;
-		p_pi += 2;
+		p_pi = deref(q, p_pi+2, p_pi_ctx);
+		p_pi_ctx = q->latest_ctx;
 	}
 
 	if (is_var(p_pi)) {
@@ -2592,6 +2623,12 @@ static bool bif_iso_current_predicate_1(query *q)
 		if (create_vars(q, 2) < 0)
 			return throw_error(q, p1, p1_ctx, "resource_error", "stack");
 		GET_FIRST_ARG(p_pi,any);
+
+		if ((get_arity(p_pi) == 2) && !CMP_STRING_TO_CSTR(q, p_pi, ":")) {
+			p_pi = deref(q, p_pi+2, p_pi_ctx);
+			p_pi_ctx = q->latest_ctx;
+		}
+
 		bool ok = search_functor(q, p1, p1_ctx, p2, p2_ctx) ? true : false;
 		cell *tmp = alloc_heap(q, 3);
 		make_instr(tmp, g_slash_s, NULL, 2, 2);
@@ -3297,7 +3334,6 @@ static bool bif_iso_op_3(query *q)
 	if (is_negative(p1) || is_gt(p1,1200))
 		return throw_error(q, p1, p1_ctx, "domain_error", "operator_priority");
 
-	q->ops_dirty = true;
 	PROLOG_LIST_HANDLER(p3);
 
 	while (is_list(p3)) {
@@ -3916,6 +3952,12 @@ static bool bif_statistics_2(query *q)
 		return unify(q, p2, p2_ctx, l, q->st.cur_ctx);
 	}
 
+	if (!CMP_STRING_TO_CSTR(q, p1, "inferences") && is_var(p2)) {
+		cell tmp;
+		make_int(&tmp, (pl_int)q->total_goals);
+		return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+	}
+
 	if (!CMP_STRING_TO_CSTR(q, p1, "frames") && is_var(p2)) {
 		cell tmp;
 		make_int(&tmp, q->st.fp);
@@ -4351,7 +4393,7 @@ static bool bif_must_be_4(query *q)
 	const char *src = C_STR(q, p2);
 
 	if (!strcmp(src, "var") && !is_var(p1))
-		return throw_error2(q, p1, p1_ctx, "uninstantiation_error", "not_sufficiently_instantiated", p3);
+		return throw_error2(q, p1, p1_ctx, "type_error", "var", p3);
 	else if (!strcmp(src, "nonvar") && is_var(p1))
 		return throw_error2(q, p1, p1_ctx, "instantiation_error", "instantiated", p3);
 
@@ -4494,7 +4536,7 @@ static bool do_must_be_2(query *q, cell *p2, pl_ctx p2_ctx, cell *p1, pl_ctx p1_
 	const char *src = C_STR(q, p2);
 
 	if (!strcmp(src, "var") && !is_var(p1))
-		return throw_error(q, p1, p1_ctx, "uninstantiation_error", "not_sufficiently_instantiated");
+		return throw_error(q, p1, p1_ctx, "type_error", "var");
 	else if (!strcmp(src, "nonvar") && is_var(p1))
 		return throw_error(q, p1, p1_ctx, "instantiation_error", "instantiated");
 
@@ -4800,17 +4842,234 @@ static bool bif_sys_skip_max_list_4(query *q)
 	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
 }
 
-// FIXME: not truly crypto strength
+// flag/3 keys as SWI has them: an atom, an integer, or a compound by name/arity.
+
+static bool flag_key(query *q, cell *c, pl_ctx c_ctx, char *buf, size_t len)
+{
+	if (is_var(c))
+		return throw_error(q, c, c_ctx, "instantiation_error", "key");
+
+	if (is_atom(c))
+		snprintf(buf, len, "a%s", C_STR(q, c));
+	else if (is_smallint(c))
+		snprintf(buf, len, "i%"PRId64"", (int64_t)get_smallint(c));
+	else if (is_compound(c))
+		snprintf(buf, len, "c%s/%u", C_STR(q, c), (unsigned)get_arity(c));
+	else
+		return throw_error(q, c, c_ctx, "type_error", "key");
+
+	return true;
+}
+
+static bool flag_value_eq(const cell *a, const cell *b)
+{
+	if (is_float(a) && is_float(b))
+		return a->val_float == b->val_float;
+
+	if (is_smallint(a) && is_smallint(b))
+		return get_smallint(a) == get_smallint(b);
+
+	return is_atom(a) && is_atom(b) && (a->val_off == b->val_off);
+}
+
+// '$flag_get'(+Key, -Value): 0 for a flag never set.
+
+static bool bif_sys_flag_get_2(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	char key[1024];
+
+	if (!flag_key(q, p1, p1_ctx, key, sizeof(key)))
+		return false;
+
+	cell tmp, *val;
+	make_int(&tmp, 0);
+	prolog_lock(q->pl);
+
+	if (sl_get(q->pl->flagtab, key, (void*)&val))
+		tmp = *val;
+
+	prolog_unlock(q->pl);
+	return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$flag_cas'(+Key, +Old, +New): set New only if the value is still Old,
+// so flag/3 can evaluate outside any lock and retry when it lost a race.
+
+static bool bif_sys_flag_cas_3(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,any);
+	char key[1024];
+
+	if (!flag_key(q, p1, p1_ctx, key, sizeof(key)))
+		return false;
+
+	cell v;
+
+	if (is_atom(p3))
+		make_atom(&v, new_atom(q->pl, C_STR(q, p3)));
+	else if (is_smallint(p3))
+		make_int(&v, get_smallint(p3));
+	else if (is_float(p3))
+		make_float(&v, p3->val_float);
+	else if (is_number(p3))
+		return throw_error(q, p3, p3_ctx, "representation_error", "int64_t");
+	else
+		return throw_error(q, p3, p3_ctx, "type_error", "flag_value");
+
+	cell zero, *cur = &zero;
+	make_int(&zero, 0);
+	prolog_lock(q->pl);
+	sl_get(q->pl->flagtab, key, (void*)&cur);
+
+	if (!flag_value_eq(cur, p2)) {
+		prolog_unlock(q->pl);
+		return false;
+	}
+
+	if (cur != &zero) {
+		*cur = v;
+		prolog_unlock(q->pl);
+		return true;
+	}
+
+	char *k = TPL_strdup(key);
+	cell *val = TPL_malloc(sizeof(cell));
+
+	if (!k || !val) {
+		prolog_unlock(q->pl);
+		TPL_free(k);
+		TPL_free(val);
+		return throw_error(q, p1, p1_ctx, "resource_error", "memory");
+	}
+
+	*val = v;
+	sl_set(q->pl->flagtab, k, val);
+	prolog_unlock(q->pl);
+	return true;
+}
+
+// The goal count call_with_inference_limit/3 limits, and the limit in force.
+
+static bool bif_sys_inferences_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	cell tmp;
+	make_int(&tmp, (pl_int)q->total_goals);
+	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
+}
+
+static bool bif_sys_inference_limit_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	cell tmp;
+	make_int(&tmp, (pl_int)q->inference_limit);
+	return unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$start_inference_limit'(+Limit, +Old, -New): count from here, just as
+// the goal starts, with room for the goals call_with_inference_limit/3
+// itself runs after the goal exits, and never past an outer limit.
+
+#define INFERENCE_LIMIT_TAIL 20
+
+static bool bif_sys_start_inference_limit_3(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	GET_NEXT_ARG(p2,integer);
+	GET_NEXT_ARG(p3,var);
+	uint64_t limit = q->total_goals + (uint64_t)get_smallint(p1) + INFERENCE_LIMIT_TAIL;
+	uint64_t old = (uint64_t)get_smallint(p2);
+
+	if (old && (old < limit))
+		limit = old;
+
+	q->inference_limit = limit;
+	q->goal_trap = q->inference_limit || q->stack_over;
+	cell tmp;
+	make_int(&tmp, (pl_int)limit);
+	return unify(q, p3, p3_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$pause_inference_limit'(+Old, -Rest): the goal has exited, so stop
+// charging it, put the outer limit back, and keep what it has left for a retry.
+
+static bool bif_sys_pause_inference_limit_2(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	GET_NEXT_ARG(p2,var);
+	uint64_t rest = q->inference_limit > q->total_goals ? q->inference_limit - q->total_goals : 0;
+	q->inference_limit = (uint64_t)get_smallint(p1);
+	q->goal_trap = q->inference_limit || q->stack_over;
+	cell tmp;
+	make_int(&tmp, (pl_int)rest);
+	return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+}
+
+// '$restore_inference_limit'(+Old): after an inner limit was exceeded, an
+// outer one already passed gets the same room, so its own wrapper can finish.
+
+static bool bif_sys_restore_inference_limit_1(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	uint64_t old = (uint64_t)get_smallint(p1);
+
+	if (old && (old < q->total_goals + INFERENCE_LIMIT_TAIL))
+		old = q->total_goals + INFERENCE_LIMIT_TAIL;
+
+	q->inference_limit = old;
+	q->goal_trap = q->inference_limit || q->stack_over;
+	return true;
+}
+
+static bool bif_sys_set_inference_limit_1(query *q)
+{
+	GET_FIRST_ARG(p1,integer);
+	q->inference_limit = is_smallint(p1) && (get_smallint(p1) > 0) ? (uint64_t)get_smallint(p1) : 0;
+	q->goal_trap = q->inference_limit || q->stack_over;
+	return true;
+}
+
+// Bytes from the OS random source; never a seeded PRNG, so fail rather than fall back.
+
+static bool os_random_bytes(unsigned char *buf, size_t len)
+{
+#if defined(_WIN32)
+	while (len) {
+		unsigned r;
+
+		if (rand_s(&r))
+			return false;
+
+		for (unsigned i = 0; (i < sizeof(r)) && len; i++, len--, r >>= 8)
+			*buf++ = r & 0xFF;
+	}
+#elif defined(__ANDROID__)
+	arc4random_buf(buf, len);			// bionic has getentropy only from API 28
+#elif TPL_FREESTANDING || defined(__riscos__)		// tpl_features.h always defines it, as 0 or 1
+	(void) buf;							// no OS random source to ask
+	(void) len;
+	return false;
+#else
+	while (len) {
+		size_t n = len < 256 ? len : 256;		// getentropy's per-call limit
+
+		if (getentropy(buf, n))
+			return false;
+
+		buf += n;
+		len -= n;
+	}
+#endif
+
+	return true;
+}
 
 static bool bif_crypto_n_random_bytes_2(query *q)
 {
-	static bool s_seed = false;
-
-	if (!s_seed) {
-		srand(time(NULL));
-		s_seed = true;
-	}
-
 	GET_FIRST_ARG(p1,integer);
 	GET_NEXT_ARG(p2,list_or_var);
 	int n = get_smallint(p1);
@@ -4818,14 +5077,23 @@ static bool bif_crypto_n_random_bytes_2(query *q)
 	if (n < 1)
 		return throw_error(q, p1, p1_ctx, "domain_error", "not_less_than_zero");
 
-	CHECKED(init_tmp_heap(q));
+	unsigned char *bytes = TPL_malloc(n);
+	CHECKED(bytes);
 
-	while (n--) {
-		int i = rand() % 256;
+	if (!os_random_bytes(bytes, n)) {
+		TPL_free(bytes);
+		return throw_error(q, p1, p1_ctx, "system_error", "random_source");
+	}
+
+	CHECKED(init_tmp_heap(q), TPL_free(bytes));
+
+	for (int i = 0; i < n; i++) {
 		cell tmp;
-		make_int(&tmp, i);
+		make_int(&tmp, bytes[i]);
 		append_list(q, &tmp);
 	}
+
+	TPL_free(bytes);
 
 	cell *l = end_list(q);
 	CHECKED(l);
@@ -5638,21 +5906,6 @@ static bool bif_sys_load_flags_0(query *q)
 	return true;
 }
 
-static void load_ops(query *q);
-
-static bool bif_sys_load_ops_0(query *q)
-{
-	load_ops(q);
-	return true;
-}
-
-static bool bif_sys_ops_dirty_0(query *q)
-{
-	bool ok = q->ops_dirty;
-	q->ops_dirty = false;
-	return ok;
-}
-
 static void do_template(char *tmpbuf, const char *name, unsigned arity, const char *help, bool function, bool quote)
 {
 	SB(t);
@@ -5738,10 +5991,33 @@ static bool bif_sys_predicate_property_2(query *q)
 		if (unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
 			return false;
 
+		// Properties a system predicate doesn't have, as against no property at all.
+
+		static const char *props[] = {"exported", "public", "multifile", "discontiguous",
+			"thread_local", "foreign", "private", "tabled", "choice_construct", "visible", NULL};
+
+		for (const char **pp = props; is_atom(p2) && *pp; pp++) {
+			if (!CMP_STRING_TO_CSTR(q, p2, *pp))
+				return !strcmp(*pp, "visible");
+		}
+
 		return throw_error(q, p2, p2_ctx, "domain_error", "predicate_property");
 	}
 
 	predicate *pr = find_predicate(q->st.m, p1);
+
+	// A system predicate written in Prolog is in system or user, and seen
+	// from every module.
+
+	if (!pr) {
+		predicate *pr2 = find_predicate(q->pl->system_m, p1);
+
+		if (!pr2)
+			pr2 = find_predicate(q->pl->user_m, p1);
+
+		if (pr2 && pr2->is_builtin)
+			pr = pr2;
+	}
 
 	if (!pr)
 		return false;
@@ -5762,6 +6038,13 @@ static bool bif_sys_predicate_property_2(query *q)
 
 	if (pr->is_dynamic) {
 		make_atom(&tmp, new_atom(q->pl, "dynamic"));
+
+		if (unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
+			return true;
+	}
+
+	if (pr->is_thread_local) {
+		make_atom(&tmp, new_atom(q->pl, "thread_local"));
 
 		if (unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
 			return true;
@@ -5799,6 +6082,61 @@ static bool bif_sys_predicate_property_2(query *q)
 		return true;
 
 	return false;
+}
+
+// '$predicate_counts'(:Head, -Clauses, -Rules), for predicate_property/2's
+// number_of_clauses and number_of_rules: fails unless Head's predicate is
+// dynamic or has clauses here, so not for one only imported.
+
+static bool bif_sys_predicate_counts_3(query *q)
+{
+	GET_FIRST_ARG(p1,callable);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,any);
+	module *m = q->st.m;
+
+	if ((p1->val_off == g_colon_s) && (get_arity(p1) == 2)) {
+		cell *cm = deref(q, p1 + 1, p1_ctx);
+
+		if (!is_atom(cm) || !(m = find_module(q->pl, C_STR(q, cm))))
+			return false;
+
+		p1 = deref(q, p1 + 2, p1_ctx);
+
+		if (!is_callable(p1))
+			return false;
+	}
+
+	predicate *pr = find_predicate(m, p1);
+
+	if (pr && pr->is_thread_local)
+		pr = thread_local_shadow(pr);
+
+	if (!pr || (!pr->head && !pr->is_dynamic))
+		return false;
+
+	pl_int clauses = 0, rules = 0;
+	prolog_lock_mod(q->pl, pr->m);
+
+	for (rule *r = pr->head; r; r = r->next) {
+		if (r->dbgen_retracted)
+			continue;
+
+		clauses++;
+
+		if (get_logical_body(r->cl.cells))		// is_fact is set only when consulting
+			rules++;
+	}
+
+	prolog_unlock_mod(q->pl, pr->m);
+	cell tmp;
+	make_int(&tmp, clauses);
+
+	if (!unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx))
+		return false;
+
+	make_int(&tmp, rules);
+	return unify(q, p3, p3_ctx, &tmp, q->st.cur_ctx);
 }
 
 static bool bif_sys_evaluable_property_2(query *q)
@@ -6346,15 +6684,31 @@ static bool bif_strip_module_3(query *q)
 	GET_NEXT_ARG(p2,atom_or_var);
 	GET_NEXT_ARG(p3,any);
 
-	if (p1->val_off == g_colon_s) {
+	if ((p1->val_off == g_colon_s) && (get_arity(p1) == 2)) {
 		cell *cm = deref(q, p1+1, p1_ctx);
 		pl_ctx cm_ctx = q->latest_ctx;
+		cell *ct = deref(q, p1+2, p1_ctx);
+		pl_ctx ct_ctx = q->latest_ctx;
+
+		// As in SWI, the innermost of nested qualifications: a:b:c is b and c.
+
+		while (is_atom(cm) && (ct->val_off == g_colon_s) && (get_arity(ct) == 2)) {
+			cell *ct2 = ct;
+			pl_ctx ct2_ctx = ct_ctx;
+			cell *cm2 = deref(q, ct2+1, ct2_ctx);
+
+			if (!is_atom(cm2))
+				break;
+
+			cm = cm2;
+			cm_ctx = q->latest_ctx;
+			ct = deref(q, ct2+2, ct2_ctx);
+			ct_ctx = q->latest_ctx;
+		}
 
 		if (!unify(q, p2, p2_ctx, cm, cm_ctx))
 			return false;
 
-		cell *ct = deref(q, p1+2, p1_ctx);
-		pl_ctx ct_ctx = q->latest_ctx;
 		return unify(q, p3, p3_ctx, ct, ct_ctx);
 	}
 
@@ -6838,9 +7192,17 @@ static void load_properties(module *m)
 	format_property(m, tmpbuf, sizeof(tmpbuf), "once", 1, "meta_predicate(once(0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "ignore", 1, "meta_predicate(ignore(0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "call", 1, "meta_predicate(call(0))", false); SB_strcat(pr, tmpbuf);
-	format_property(m, tmpbuf, sizeof(tmpbuf), "call_task", 1, "meta_predicate(call_task(0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "task_call", 1, "meta_predicate(task_call(0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "findall", 3, "meta_predicate(findall(?,0,-))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "findnsols", 4, "meta_predicate(findnsols(?,?,0,-))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "forall", 2, "meta_predicate(forall(0,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "limit", 2, "meta_predicate(limit(+,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "offset", 2, "meta_predicate(offset(+,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "with_output_to", 2, "meta_predicate(with_output_to(?,0))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "format", 2, "meta_predicate(format(+,:))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "format", 3, "meta_predicate(format(+,+,:))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "task_create", 2, "meta_predicate(task_create(0,-))", false); SB_strcat(pr, tmpbuf);
+	format_property(m, tmpbuf, sizeof(tmpbuf), "in_temporary_module", 3, "meta_predicate(in_temporary_module(?,0,0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "|", 2, "meta_predicate(((:)|(+)))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "time", 1, "meta_predicate(time(0))", false); SB_strcat(pr, tmpbuf);
 	format_property(m, tmpbuf, sizeof(tmpbuf), "call_nth", 2, "meta_predicate(call_nth(0,?))", false); SB_strcat(pr, tmpbuf);
@@ -6883,14 +7245,14 @@ static void load_properties(module *m)
 	for (int i = 2; i <= 8; i++) {
 		char metabuf[1024];
 		char *dst2 = metabuf;
-		dst2 += snprintf(dst2, sizeof(metabuf), "meta_predicate(call_task(%d", i-1);
+		dst2 += snprintf(dst2, sizeof(metabuf), "meta_predicate(task_call(%d", i-1);
 
 		for (int j = 1; j < i; j++)
 			dst2 += snprintf(dst2, sizeof(metabuf)-(dst2-metabuf), ",?");
 
 
 		snprintf(dst2, sizeof(metabuf)-(dst2-metabuf), "))");
-		format_property(m, tmpbuf, sizeof(tmpbuf), "call_task", i, metabuf, false); SB_strcat(pr, tmpbuf);
+		format_property(m, tmpbuf, sizeof(tmpbuf), "task_call", i, metabuf, false); SB_strcat(pr, tmpbuf);
 	}
 
 	for (const builtins *ptr = g_atts_bifs; ptr->name; ptr++) {
@@ -7176,93 +7538,31 @@ static void load_flags(query *q)
 	SB_free(pr);
 }
 
-static void load_ops(query *q)
+static void append_op(void *ctx, const op_table *ptr)
 {
-	SB_alloc(pr, 1024*8);
-	sliter *iter = sl_first(q->st.m->ops);
-	op_table *ptr;
+	query *q = ctx;
+	const char *spec = ptr->specifier == OP_FX ? "fx" : ptr->specifier == OP_FY ? "fy"
+		: ptr->specifier == OP_XF ? "xf" : ptr->specifier == OP_YF ? "yf"
+		: ptr->specifier == OP_XFX ? "xfx" : ptr->specifier == OP_XFY ? "xfy" : "yfx";
+	cell tmp[4];
+	make_instr(tmp, new_atom(q->pl, "op"), NULL, 3, 3);
+	make_int(tmp+1, ptr->priority);
+	make_atom(tmp+2, new_atom(q->pl, spec));
+	make_atom(tmp+3, new_atom(q->pl, ptr->name));
+	append_list(q, tmp);
+}
 
-	while (sl_next(iter, (void**)&ptr)) {
-		char specifier[80], name[1024];
+// '$current_ops'(-List): op(Priority,Type,Name) for each operator the
+// calling module sees, for current_op/3.
 
-		if (!ptr->priority || !ptr->specifier)
-			continue;
-
-		if (ptr->specifier == OP_FX)
-			strcpy(specifier, "fx");
-		else if (ptr->specifier == OP_FY)
-			strcpy(specifier, "fy");
-		else if (ptr->specifier == OP_YF)
-			strcpy(specifier, "yf");
-		else if (ptr->specifier == OP_XF)
-			strcpy(specifier, "xf");
-		else if (ptr->specifier == OP_YFX)
-			strcpy(specifier, "yfx");
-		else if (ptr->specifier == OP_XFY)
-			strcpy(specifier, "xfy");
-		else if (ptr->specifier == OP_XFX)
-			strcpy(specifier, "xfx");
-
-		bool quote = needs_quoting(q->st.m, ptr->name, strlen(ptr->name));
-
-		if (quote) {
-			char *dst2 = formatted(ptr->name, strlen(ptr->name), false, false);
-			snprintf(name, sizeof(name), "%s", dst2);
-			TPL_free(dst2);
-		} else
-			snprintf(name, sizeof(name), "%s", ptr->name);
-
-		if (quote) {
-			SB_sprintf(pr, "'$op'( '%s', %s, %u).\n", name, specifier, ptr->priority);
-		} else {
-			SB_sprintf(pr, "'$op'( (%s), %s, %u).\n", name, specifier, ptr->priority);
-		}
-	}
-
-	sl_done(iter);
-	iter = sl_first(q->st.m->defops);
-
-	while (sl_next(iter, (void**)&ptr)) {
-		char specifier[80];
-
-		if (!ptr->specifier)
-			continue;
-
-		if (ptr->specifier == OP_FX)
-			strcpy(specifier, "fx");
-		else if (ptr->specifier == OP_FY)
-			strcpy(specifier, "fy");
-		else if (ptr->specifier == OP_YF)
-			strcpy(specifier, "yf");
-		else if (ptr->specifier == OP_XF)
-			strcpy(specifier, "xf");
-		else if (ptr->specifier == OP_YFX)
-			strcpy(specifier, "yfx");
-		else if (ptr->specifier == OP_XFY)
-			strcpy(specifier, "xfy");
-		else if (ptr->specifier == OP_XFX)
-			strcpy(specifier, "xfx");
-
-
-		char *dst2 = formatted(ptr->name, strlen(ptr->name), false, false);
-		SB_sprintf(pr, "'$op'('%s', %s, %u).\n", dst2, specifier, ptr->priority);
-		TPL_free(dst2);
-	}
-
-	sl_done(iter);
-	parser *p = parser_create(q->pl->user_m);
-
-	if (!p) {
-		SB_free(pr);
-		return;
-	}
-
-	p->srcptr = SB_cstr(pr);
-	p->is_consulting = true;
-	tokenize(p, false, false);
-	parser_destroy(p);
-	//printf("*** %s load_ops %s\n", q->st.m->name, SB_cstr(pr));
-	SB_free(pr);
+static bool bif_sys_current_ops_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	CHECKED(init_tmp_heap(q));
+	visit_ops(q->st.m, append_op, q);
+	cell *l = end_list(q);
+	CHECKED(l);
+	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
 }
 
 builtins g_iso_bifs[] =
@@ -7369,6 +7669,14 @@ builtins g_other_bifs[] =
 	{"string_concat", 3, bif_string_concat_3, "+string,+string,?string", false, false, BLAH},
 	{"string_length", 2, bif_string_length_2, "+string,?integer", false, false, BLAH},
 	{"crypto_n_random_bytes", 2, bif_crypto_n_random_bytes_2, "+integer,-codes", false, false, BLAH},
+	{"$flag_get", 2, bif_sys_flag_get_2, "+term,-number", false, false, BLAH},
+	{"$inferences", 1, bif_sys_inferences_1, "-integer", false, false, BLAH},
+	{"$inference_limit", 1, bif_sys_inference_limit_1, "-integer", false, false, BLAH},
+	{"$set_inference_limit", 1, bif_sys_set_inference_limit_1, "+integer", false, false, BLAH},
+	{"$start_inference_limit", 3, bif_sys_start_inference_limit_3, "+integer,+integer,-integer", false, false, BLAH},
+	{"$pause_inference_limit", 2, bif_sys_pause_inference_limit_2, "+integer,-integer", false, false, BLAH},
+	{"$restore_inference_limit", 1, bif_sys_restore_inference_limit_1, "+integer", false, false, BLAH},
+	{"$flag_cas", 3, bif_sys_flag_cas_3, "+term,+number,+number", false, false, BLAH},
 	{"cyclic_term", 1, bif_cyclic_term_1, "+term", false, false, BLAH},
 	{"load_text", 2, bif_load_text_2, "+string,+list", false, false, BLAH},
 	{"between", 3, bif_between_3, "+integer,+integer,?integer", false, false, BLAH},
@@ -7396,14 +7704,14 @@ builtins g_other_bifs[] =
 	{"$counter", 1, bif_sys_counter_1, NULL, false, false, BLAH},
 	{"$legacy_current_prolog_flag", 2, bif_sys_current_prolog_flag_2, "+atom,?term", true, false, BLAH},
 	{"$legacy_predicate_property", 2, bif_sys_predicate_property_2, "+callable,?string", false, false, BLAH},
+	{"$predicate_counts", 3, bif_sys_predicate_counts_3, "+callable,?integer,?integer", false, false, BLAH},
 	{"$legacy_evaluable_property", 2, bif_sys_evaluable_property_2, "+callable,?string", false, false, BLAH},
 	{"$det_length_rundown", 2, bif_sys_det_length_rundown_2, "?list,+integer", false, false, BLAH},
 	{"$memberchk", 3, bif_sys_memberchk_3, "?term,?list,-term", false, false, BLAH},
 	{"$is_partial_string", 1, bif_sys_is_partial_string_1, "+string", false, false, BLAH},
 	{"$load_properties", 0, bif_sys_load_properties_0, NULL, false, false, BLAH},
 	{"$load_flags", 0, bif_sys_load_flags_0, NULL, false, false, BLAH},
-	{"$load_ops", 0, bif_sys_load_ops_0, NULL, false, false, BLAH},
-	{"$ops_dirty", 0, bif_sys_ops_dirty_0, NULL, false, false, BLAH},
+	{"$current_ops", 1, bif_sys_current_ops_1, "-list", false, false, BLAH},
 	{"$list", 1, bif_sys_list_1, "?list", false, false, BLAH},
 	{"$queue", 1, bif_sys_queue_1, "+term", false, false, BLAH},
 	{"$incr", 2, bif_sys_incr_2, "@integer,+integer", false, false, BLAH},

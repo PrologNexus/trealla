@@ -27,11 +27,11 @@
 % installs a link; a short-lived task cannot outrun code that has not
 % yielded yet.
 %
-% recv/1 does not block (it never did, even before GUSTTO) and still
-% does not - task_actor_recv/1,2 use recv/2 instead, which parks the
+% task_recv/1 does not block (it never did, even before GUSTTO) and still
+% does not - task_actor_recv/1,2 use task_recv/2 instead, which parks the
 % task (do_yield(), the same mechanism thread_get_message/3's blocking
 % form uses) rather than spinning. No CPU spent polling: a task
-% waiting on a message costs nothing until send/2 wakes it, or its
+% waiting on a message costs nothing until task_send/2 wakes it, or its
 % timeout elapses.
 
 :- use_module(library(lists)).
@@ -41,11 +41,11 @@
 
 task_actor_self(Pid) :- task_self(Pid).
 
-task_actor_send(Pid, Msg) :- send(Pid, Msg).
+task_actor_send(Pid, Msg) :- task_send(Pid, Msg).
 
-task_actor_recv(Msg) :- recv(Msg, []).
+task_actor_recv(Msg) :- task_recv(Msg, []).
 
-task_actor_recv(Msg, Opts) :- recv(Msg, Opts).
+task_actor_recv(Msg, Opts) :- task_recv(Msg, Opts).
 
 task_actor_spawn(Goal, Pid) :- task_actor_spawn(Goal, Pid, []).
 
@@ -96,7 +96,7 @@ task_actor_unlink(Pid) :-
 % One thing the port does not get for free: a thread-based supervisor
 % runs in the background just by existing - it is a real, preemptively
 % scheduled thread. A task-based one only makes progress while its
-% owning thread drives the scheduler (wait/0, or a caller that keeps
+% owning thread drives the scheduler (task_wait/0, or a caller that keeps
 % yielding it turns), so task_supervisor_start/2,3 called directly from
 % a thread that then goes on to do other things leaves it starved -
 % spawned, registered, never actually run. Host it on a thread of its
@@ -104,11 +104,11 @@ task_actor_unlink(Pid) :-
 %
 %   sup_host(Children, Opts, ReadyQid) :-
 %       task_supervisor_start(Children, Sup, Opts),
-%       send(ReadyQid, sup(Sup)),
-%       wait.
+%       task_send(ReadyQid, sup(Sup)),
+%       task_wait.
 %
 %   task_self(Me), thread_create(sup_host(Children, Opts, Me), _, []),
-%   recv(sup(Sup), [timeout(5.0)])
+%   task_recv(sup(Sup), [timeout(5.0)])
 %
 % which gets the supervisor and everything under it its own thread to
 % run on indefinitely, exactly as a thread-based supervisor already

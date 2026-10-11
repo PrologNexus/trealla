@@ -1,0 +1,6 @@
+user:call(a)
+user:once(b)
+user:ignore(c)
+user:call(d,1)
+user:e
+user:once(f)

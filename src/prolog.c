@@ -560,6 +560,12 @@ void keyfree(const void *key, const void *val, const void *p)
 	TPL_free((void*)key);
 }
 
+static void keyvalfree(const void *key, const void *val, const void *p)
+{
+	TPL_free((void*)key);
+	TPL_free((void*)val);
+}
+
 void fake_free(const void *key, const void *val, const void *p)
 {
 	TPL_free((void*)key);
@@ -1095,10 +1101,16 @@ void pl_destroy(prolog *pl)
 	while ((m = list_front(&pl->modules)) != NULL)
 		module_destroy(m);
 
+	while ((m = pl->dead_modules) != NULL) {
+		pl->dead_modules = m->dead_next;
+		module_destroy(m);
+	}
+
 	TPL_free(pl->modmap);
 	sl_destroy(pl->fortab);
 	sl_destroy(pl->help);
 	sl_destroy(pl->alias);
+	sl_destroy(pl->flagtab);
 
 	for (int i = 0; i < MAX_STREAMS; i++) {
 		stream *str = &pl->streams[i];
@@ -1221,6 +1233,7 @@ prolog *pl_create()
 
 	pl->help = sl_create((void*)fake_strcmp, (void*)ptrfree, NULL);
 	pl->fortab = sl_create((void*)fake_strcmp, NULL, NULL);
+	pl->flagtab = sl_create((void*)fake_strcmp, (void*)keyvalfree, NULL);
 	pl->biftab = sl_create(NULL, NULL, NULL);	// keyed on the interned name
 
 	if (pl->biftab)

@@ -1,0 +1,7 @@
+encode: 'a%20b%26c%3d%c3%a9'
+unreserved: '-_.~%21%2a%27%28%29%2f'
+decode: 'a b&c=é'
+plus: 'a b c+d'
+malformed: '%zz'
+round_trip: ok
+unbound: instantiation_error

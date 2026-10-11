@@ -54,6 +54,16 @@ static void parse_host(const char *src, char hostname[1024], char path[4096], un
 		memmove(path, path+1, strlen(path+1)+1);
 }
 
+// A build without OpenSSL refuses TLS before any socket exists, rather than
+// open a plain one or fail obscurely later.
+
+static bool ssl_unavailable(query *q)
+{
+	cell tmp;
+	make_atom(&tmp, new_atom(q->pl, "ssl"));
+	return throw_error(q, &tmp, q->st.cur_ctx, "existence_error", "feature");
+}
+
 static bool bif_sys_server_3(query *q)
 {
 	GET_FIRST_ARG(p1,any);
@@ -169,6 +179,10 @@ static bool bif_sys_server_3(query *q)
 	const char *url = filename;
 	parse_host(url, hostname, path, &port, &ssl, &domain);
 	TPL_free(filename);
+
+	if (ssl && !USE_OPENSSL)
+		return ssl_unavailable(q);
+
 	int fd = domain
 		? tpl_domain_server(path, udp)
 		: tpl_server(hostname, port, udp, ssl?keyfile:NULL, ssl?certfile:NULL);
@@ -232,13 +246,24 @@ static bool bif_sys_accept_2(query *q)
 	stream *str = &q->pl->streams[n];
 	char *peer_addr = NULL;
 	int peer_port = 0;
-	int fd = tpl_accept(str, &peer_addr, &peer_port);
+	int fd;
+
+	// A listener closed by another thread wakes this with an error, which
+	// must be reported, not waited on or turned into a silent failure. A
+	// client that gave up before being accepted (ECONNABORTED) is retried.
+
+	do {
+		fd = tpl_accept(str, &peer_addr, &peer_port);
+	} while ((fd == -1) && ((errno == EINTR) || (errno == ECONNABORTED)) && !str->is_closing);
 
 	if (fd == -1) {
-		if (q->is_task)
+		if (str->is_closing || !str->is_active)
+			return throw_error(q, pstr, pstr_ctx, "existence_error", "stream");
+
+		if (q->is_task && ((errno == EAGAIN) || (errno == EWOULDBLOCK)))
 			return do_yield_on_stream(q, str, false);
 
-		return false;
+		return throw_error(q, pstr, pstr_ctx, "socket_error", tpl_socket_errname(errno));
 	}
 
 	n = new_stream(q->pl);
@@ -285,7 +310,8 @@ static bool bif_sys_accept_2(query *q)
 #endif
 
 	if (str->ssl) {
-		str2->sslptr = tpl_enable_ssl(fd, str->filename, true, str->level, NULL);
+		const char *reason;
+		str2->sslptr = tpl_enable_ssl(fd, str->filename, true, false, NULL, &reason);
 
 		if (!str2->sslptr) {
 			close(fd);
@@ -322,8 +348,8 @@ static bool bif_sys_client_5(query *q)
 	GET_NEXT_ARG(p4,var);
 	GET_NEXT_ARG(p5,list_or_nil);
 	char hostname[1024], path[1024*4];
-	char *certfile = NULL;
-	int udp = 0, nodelay = 1, ssl = 0, domain = 0, level = 0;
+	char *cafile = NULL, *server_name = NULL;
+	int udp = 0, nodelay = 1, ssl = 0, domain = 0, level = 0, verify = 1;
 	hostname[0] = path[0] = '\0';
 	unsigned port = 80;
 	char *filename = NULL;
@@ -369,11 +395,21 @@ static bool bif_sys_client_5(query *q)
 
 				if (is_atom(c))
 					ssl = !CMP_STRING_TO_CSTR(q, c, "true") ? 1 : 0;
-			} else if (!CMP_STRING_TO_CSTR(q, c, "certfile")) {
+			} else if (!CMP_STRING_TO_CSTR(q, c, "cacert")) {
 				c = deref(q, c + 1, c_ctx);
 
 				if (is_atom(c))
-					certfile = C_STR(q, c);
+					cafile = C_STR(q, c);
+			} else if (!CMP_STRING_TO_CSTR(q, c, "server_name")) {
+				c = deref(q, c + 1, c_ctx);
+
+				if (is_atom(c))
+					server_name = C_STR(q, c);
+			} else if (!CMP_STRING_TO_CSTR(q, c, "verify")) {
+				c = deref(q, c + 1, c_ctx);
+
+				if (is_atom(c))
+					verify = !CMP_STRING_TO_CSTR(q, c, "false") ? 0 : 1;
 			} else if (!CMP_STRING_TO_CSTR(q, c, "scheme")) {
 				c = deref(q, c + 1, c_ctx);
 
@@ -402,6 +438,9 @@ static bool bif_sys_client_5(query *q)
 	const char *url = filename;
 	parse_host(url, hostname, path, &port, &ssl, &domain);
 	TPL_free(filename);
+
+	if (ssl && !USE_OPENSSL)
+		return ssl_unavailable(q);
 
 	int fd = domain
 		? tpl_domain_connect(path, udp)
@@ -460,8 +499,19 @@ static bool bif_sys_client_5(query *q)
 #endif
 
 	if (str->ssl) {
-		str->sslptr = tpl_enable_ssl(fd, hostname, false, str->level, certfile);
-		CHECKED(str->sslptr);
+		const char *reason;
+		// TLS checks and names (SNI) the server as server_name(Host) says, if
+		// given, not by the address connected to: a caller can resolve and
+		// vet an address itself, connect to just that, and still verify the name.
+
+		str->sslptr = tpl_enable_ssl(fd, server_name ? server_name : hostname, false, verify, cafile, &reason);
+
+		if (!str->sslptr) {
+			str->ssl = false;
+			stream_close(q, n);
+
+			return throw_error(q, p1, p1_ctx, "ssl_error", reason ? reason : "handshake_failed");
+		}
 	}
 
 	// Always non-blocking now, not just for a task - see the matching
@@ -487,10 +537,14 @@ static bool bif_sys_server_tls_2(query *q)
 {
 	GET_FIRST_ARG(pstr,stream);
 	GET_NEXT_ARG(p1,atom_or_var);
+
+	if (!USE_OPENSSL)
+		return ssl_unavailable(q);
 	int n = get_stream(q, pstr);
 	stream *str = &q->pl->streams[n];
 	int fd = fileno(str->fp_in);
-	str->sslptr = tpl_enable_ssl(fd, NULL, true, 0, NULL);
+	const char *reason;
+	str->sslptr = tpl_enable_ssl(fd, NULL, true, false, NULL, &reason);
 
 	if (!str->sslptr)
 		return false;						// FIX 1: bool, not NULL
@@ -510,16 +564,24 @@ static bool bif_sys_client_tls_4(query *q)
 {
 	GET_FIRST_ARG(pstr,stream);
 	GET_NEXT_ARG(p1,atom);
-	GET_NEXT_ARG(p2,integer);			// FIX 8: read the declared level arg
-	GET_NEXT_ARG(p3,atom_or_var);		// FIX 8: read the declared certfile arg
+	GET_NEXT_ARG(p2,atom);				// verify: true or false
+	GET_NEXT_ARG(p3,atom_or_var);		// cacert file, else the system store
+
+	if (!USE_OPENSSL)
+		return ssl_unavailable(q);
 	int n = get_stream(q, pstr);
 	stream *str = &q->pl->streams[n];
 	int fd = fileno(str->fp_in);
 	const char *hostname = C_STR(q, p1);
-	int level = (int)get_smallint(p2);
-	const char *certfile = is_atom(p3) ? C_STR(q, p3) : NULL;
-	str->sslptr = tpl_enable_ssl(fd, hostname, false, level, certfile);
-	return str->sslptr != NULL;
+	bool verify = CMP_STRING_TO_CSTR(q, p2, "false") != 0;
+	const char *cafile = is_atom(p3) ? C_STR(q, p3) : NULL;
+	const char *reason;
+	str->sslptr = tpl_enable_ssl(fd, hostname, false, verify, cafile, &reason);
+
+	if (!str->sslptr)
+		return throw_error(q, p1, p1_ctx, "ssl_error", reason ? reason : "handshake_failed");
+
+	return true;
 }
 
 static bool bif_sys_current_host_1(query *q)
@@ -798,6 +860,28 @@ static bool bif_sys_host_address_2(query *q)
 	return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
 }
 
+// '$host_addresses'(+Host, -Addresses): all of them, for host_address/3.
+
+static bool bif_sys_host_addresses_2(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	GET_NEXT_ARG(p2,var);
+	char ips[32][64];
+	unsigned n = tpl_host_addresses(C_STR(q, p1), ips, 32);
+	CHECKED(init_tmp_heap(q));
+
+	for (unsigned i = 0; i < n; i++) {
+		cell tmp;
+		make_cstring(&tmp, ips[i]);
+		append_list(q, &tmp);
+		unshare_cell(&tmp);
+	}
+
+	cell *l = n ? end_list(q) : make_nil();
+	CHECKED(l);
+	return unify(q, p2, p2_ctx, l, q->st.cur_ctx);
+}
+
 static bool bif_sys_peer_addr_3(query *q)
 {
 	GET_FIRST_ARG(pstr,stream);
@@ -824,12 +908,13 @@ builtins g_net_bifs[] =
 	{"$accept", 2, bif_sys_accept_2, "+stream,--stream", false, false, BLAH},
 	{"$client", 5, bif_sys_client_5, "+source_sink,-atom,-atom,--stream,+list", false, false, BLAH},
 	{"$server_tls", 2, bif_sys_server_tls_2, "+stream,-atom", false, false, BLAH},
-	{"$client_tls", 4, bif_sys_client_tls_4, "+stream,+atom,+integer,+source_sink", false, false, BLAH},
+	{"$client_tls", 4, bif_sys_client_tls_4, "+stream,+atom,+atom,+source_sink", false, false, BLAH},
 	{"$current_host", 1, bif_sys_current_host_1, "-atom", false, false, BLAH},
 	{"$peer_addr", 3, bif_sys_peer_addr_3, "+stream,-atom,-integer", false, false, BLAH},
 	{"$udp_recv", 5, bif_sys_udp_recv_5, "+stream,-string,-atom,-integer,+list", false, false, BLAH},
 	{"$udp_send", 5, bif_sys_udp_send_5, "+stream,+term,+atom,+integer,+list", false, false, BLAH},
 	{"$host_address", 2, bif_sys_host_address_2, "+atom,-atom", false, false, BLAH},
+	{"$host_addresses", 2, bif_sys_host_addresses_2, "+atom,-list", false, false, BLAH},
 
 	{0}
 };

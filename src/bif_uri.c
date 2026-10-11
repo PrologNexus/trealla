@@ -941,7 +941,8 @@ typedef enum {
 	COMP_PATH,
 	COMP_SEGMENT,
 	COMP_AUTH,
-	COMP_ANY
+	COMP_ANY,
+	COMP_WWW_FORM		// www_form_encode/2: only alphanumerics and -_.~ pass, as in SWI
 } uri_comp;
 
 // Unsafe in every component: escaping these can never change what a
@@ -957,7 +958,8 @@ static const char *s_esc_extra[] = {
 	":@/?#",		// authority - not reachable from '$uri_encode', used
 					// when transcoding, where decoding an escaped ':'
 					// or '@' would move the userinfo/port boundary
-	""				// the everywhere-unsafe set on its own
+	"",				// the everywhere-unsafe set on its own
+	""				// www_form, which must_escape() decides by itself
 };
 
 static bool must_escape(int ch, uri_comp comp)
@@ -967,12 +969,15 @@ static bool must_escape(int ch, uri_comp comp)
 	if ((ch < 0x20) || (ch >= 0x7f))
 		return true;
 
+	if (comp == COMP_WWW_FORM)
+		return !isalnum(ch) && !strchr("-_.~", ch);
+
 	return strchr(s_esc_always, ch) || strchr(s_esc_extra[comp], ch);
 }
 
-static void put_escape(char **o, unsigned char ch)
+static void put_escape(char **o, unsigned char ch, bool lower)
 {
-	static const char *hex = "0123456789ABCDEF";
+	const char *hex = lower ? "0123456789abcdef" : "0123456789ABCDEF";
 	*(*o)++ = '%';
 	*(*o)++ = hex[ch >> 4];
 	*(*o)++ = hex[ch & 0x0f];
@@ -993,7 +998,7 @@ static char *pct_encode(const char *s, size_t n, uri_comp comp)
 		unsigned char ch = (unsigned char)s[i];
 
 		if (must_escape(ch, comp))
-			put_escape(&o, ch);
+			put_escape(&o, ch, comp == COMP_WWW_FORM);	// SWI writes form escapes in lowercase
 		else
 			*o++ = (char)ch;
 	}
@@ -1021,9 +1026,9 @@ static char *pct_decode(const char *s, size_t n, bool plus_is_space, size_t *out
 			*o++ = (char)((hexval((unsigned char)s[i+1]) << 4) | hexval((unsigned char)s[i+2]));
 			i += 3;
 		} else if (plus_is_space && (s[i] == '+')) {
-			// Only a query_value reads '+' as a space, and only when
-			// decoding - encoding always produces %20. That asymmetry
-			// is the HTML form-encoding legacy, and it stops here.
+			// Only a query_value or form value reads '+' as a space, and
+			// only when decoding - encoding always produces %20. That
+			// asymmetry is the HTML form-encoding legacy, and it stops here.
 
 			*o++ = ' ';
 			i++;
@@ -1138,6 +1143,7 @@ static bool get_component(query *q, cell *c, pl_ctx c_ctx, uri_comp *comp)
 	else if (!CMP_STRING_TO_CSTR(q, c, "fragment")) *comp = COMP_FRAGMENT;
 	else if (!CMP_STRING_TO_CSTR(q, c, "path")) *comp = COMP_PATH;
 	else if (!CMP_STRING_TO_CSTR(q, c, "segment")) *comp = COMP_SEGMENT;
+	else if (!CMP_STRING_TO_CSTR(q, c, "$www_form")) *comp = COMP_WWW_FORM;	// for www_form_encode/2 only
 	else return false;
 
 	return true;
@@ -1191,7 +1197,7 @@ static bool bif_sys_uri_decode_3(query *q)
 
 	bool ok = false;
 	size_t raw_len = 0;
-	char *out = pct_decode(src, strlen(src), comp == COMP_QUERY_VALUE, &raw_len);
+	char *out = pct_decode(src, strlen(src), (comp == COMP_QUERY_VALUE) || (comp == COMP_WWW_FORM), &raw_len);
 
 	if (out) {
 		size_t len = 0;
@@ -1256,11 +1262,11 @@ static char *transcode(const char *s, size_t n, uri_comp comp, bool to_ascii)
 
 			if (ch >= 0x80) {
 				if (to_ascii)
-					put_escape(&o, ch);
+					put_escape(&o, ch, false);
 				else
 					*o++ = (char)ch;
 			} else if (must_escape(ch, COMP_ANY))
-				put_escape(&o, ch);
+				put_escape(&o, ch, false);
 			else
 				*o++ = (char)ch;
 		}

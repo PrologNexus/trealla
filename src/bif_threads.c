@@ -154,6 +154,39 @@ static thread *main_thread(prolog *pl)
 // The same q->thread_ptr-or-threads[0] idiom is used in query.h,
 // toplevel.c, bif_os.c and bif_tabling.c; this just names it.
 
+// The Prolog thread this OS thread runs, for code with no query to ask,
+// such as assert_begin() resolving a thread_local/1 predicate.
+
+static _Thread_local thread *g_self_thread;
+
+thread *current_thread(prolog *pl)
+{
+	return g_self_thread ? g_self_thread : pl->main_thread;
+}
+
+// A thread's shadows of thread_local/1 predicates keep their names, for
+// the next thread to get the same id, but lose their clauses with it.
+
+void thread_local_release(thread *t)
+{
+	for (unsigned i = 0; i < t->tl_shadows_n; i++) {
+		predicate *pr = t->tl_shadows[i];
+		module *m = pr->m;
+		prolog_lock_mod(m->pl, m);
+
+		for (rule *r = pr->head; r; r = r->next) {
+			if (!r->dbgen_retracted)
+				retract_from_db(m, r);
+		}
+
+		prolog_unlock_mod(m->pl, m);
+	}
+
+	TPL_free(t->tl_shadows);
+	t->tl_shadows = NULL;
+	t->tl_shadows_n = t->tl_shadows_cap = 0;
+}
+
 thread *get_self_query(const query *q)
 {
 	return q->thread_ptr ? q->thread_ptr : main_thread(q->pl);
@@ -340,6 +373,7 @@ void threads_destroy(prolog *pl)
 		next = t->live_next;
 		tasks_destroy(t);
 		sched_destroy(t);
+		gvars_destroy(t);
 		TPL_free(t);
 	}
 
@@ -347,6 +381,7 @@ void threads_destroy(prolog *pl)
 		next = t->free_next;
 		tasks_destroy(t);
 		sched_destroy(t);
+		gvars_destroy(t);
 		TPL_free(t);
 	}
 
@@ -404,6 +439,9 @@ static int new_thread(prolog *pl)
 	t->id = pthread_self();
 #endif
 	t->is_detached = false;
+	t->is_joining = false;
+	gvars_destroy(t);					// a recycled struct starts with none
+	t->gvar_seq = 0;
 	t->is_queue_only = false;
 	t->is_mutex_only = false;
 	t->is_finished = false;
@@ -1033,10 +1071,28 @@ static void do_unlock_all(thread *me)
 	}
 }
 
+// A goal ended by thread_exit/1 can leave choicepoints, such as a catch/3
+// still open, pointing into the goal that is about to be freed. The at_exit
+// goal runs on the same query and backtracked into them.
+
+static void drop_leftover_choices(query *q)
+{
+	while (q->st.cp) {
+		choice *ch = GET_CURR_CHOICE();
+
+		if (ch->owns_pr)
+			leave_predicate(q, ch->st.pr, ch->st.pr_dbgen, false);
+
+		drop_choice(q);
+	}
+}
+
 static void *start_routine_thread_create(thread *t)
 {
 	t->id = pthread_self();
+	g_self_thread = t;
 	execute(t->q, t->goal, t->num_vars);
+	drop_leftover_choices(t->q);
 	unshare_cells(t->goal, t->goal->num_cells);
 	TPL_free(t->goal);
 	t->goal = NULL;
@@ -1089,6 +1145,8 @@ static void *start_routine_thread_create(thread *t)
 	TPL_free(t->alias);
 	t->alias = NULL;
 	query_destroy(t->q);
+	gvars_destroy(t);
+	thread_local_release(t);
 	t->q = NULL;
 	msg *m;
 
@@ -1140,6 +1198,7 @@ static bool bif_thread_create_3(query *q)
 	cell *alias = NULL, *at_exit_goal = NULL;
 	pl_ctx at_exit_goal_ctx = 0;
 	bool is_detached = false;
+	uint64_t stack_limit = 0;
 	PROLOG_LIST_HANDLER(p3);
 
 	while (is_list(p3)) {
@@ -1190,6 +1249,17 @@ static bool bif_thread_create_3(query *q)
 
 			if (name->val_off == g_true_s)
 				is_detached = true;
+		} else if (!CMP_STRING_TO_CSTR(q, c, "stack_limit")) {
+			if (is_var(name))
+				return throw_error(q, name, name_ctx, "instantiation_error", "thread_option");
+
+			if (!is_integer(name))
+				return throw_error(q, name, name_ctx, "type_error", "integer");
+
+			if (is_negative(name))
+				return throw_error(q, name, name_ctx, "domain_error", "not_less_than_zero");
+
+			stack_limit = is_smallint(name) ? (uint64_t)get_smallint(name) : 0;	// a bigint is no limit to speak of
 		} else
 			return throw_error(q, c, c_ctx, "domain_error", "thread_option");
 
@@ -1232,6 +1302,7 @@ static bool bif_thread_create_3(query *q)
 	CHECKED(t->q);
 	t->q->thread_ptr = t;
 	t->q->my_chan = n;
+	t->q->stack_limit = stack_limit;
 	cell *tmp2 = TPL_calloc(1+tmp->num_cells+1+1, sizeof(cell));
 	CHECKED(tmp2);
 	pl_idx num_cells = 0;
@@ -1299,6 +1370,8 @@ static bool bif_thread_create_3(query *q)
 		if (t->goal) { unshare_cells(t->goal, t->goal->num_cells); TPL_free(t->goal); t->goal = NULL; }
 		if (t->at_exit_goal) { unshare_cells(t->at_exit_goal, t->at_exit_goal->num_cells); TPL_free(t->at_exit_goal); t->at_exit_goal = NULL; }
 		query_destroy(t->q);
+		gvars_destroy(t);
+		thread_local_release(t);
 		t->q = NULL;
 		retire_thread(q->pl, t);
 		return throw_error(q, p1, p1_ctx, "system_error", "pthread_create");
@@ -1344,6 +1417,19 @@ static bool bif_thread_join_2(query *q)
 	if (q->is_task && !t->is_finished)
 		return do_yield(q, MSG_TASK_POLL_MS);
 
+	// Claim the join under the guard, so the thread can't detach itself
+	// (say from its at_exit goal) while this waits: pthread_join() on a
+	// detached thread is undefined, and here it never returned.
+
+	acquire_lock(&t->guard);
+
+	if (t->is_detached) {
+		release_lock(&t->guard);
+		return throw_error(q, p1, p1_ctx, "domain_error", "not_joinable");
+	}
+
+	t->is_joining = true;
+	release_lock(&t->guard);
 	void *retval;
 
 	if (pthread_join((pthread_t)t->id, &retval)) {
@@ -1391,6 +1477,8 @@ static bool bif_thread_join_2(query *q)
 	TPL_free(t->alias);
 	t->alias = NULL;
 	query_destroy(t->q);
+	gvars_destroy(t);
+	thread_local_release(t);
 	t->q = NULL;
 	msg *m;
 
@@ -1440,10 +1528,13 @@ bool do_signal(query *q, void *thread_ptr)
 	CHECKED(c);
 	unshare_cells(m->c, m->c->num_cells);	// FIX: release cell refs (was leaked)
 	TPL_free(m);
-	cell *tmp = prepare_call(q, CALL_NOSKIP, c, q->st.cur_ctx, 2);
+	// The engine delivers this before running q->st.instr, so the handler
+	// returns to that goal, not past it: make_call() skipped it, and any
+	// signal, even true, could wreck the thread it interrupted.
+
+	cell *tmp = prepare_call(q, CALL_NOSKIP, c, q->st.cur_ctx, 1);
 	ENSURE(tmp);
-	make_instr(tmp+c->num_cells+1, g_true_s, bif_iso_true_0, 0, 0);
-	make_call(q, tmp+c->num_cells);
+	make_call_redo(q, tmp+c->num_cells);
 	q->st.instr = tmp;
 	return true;
 }
@@ -1503,24 +1594,16 @@ static void retire_cancelled_thread(thread *t)
 	}
 
 	query_destroy(t->q);
+
+	gvars_destroy(t);
+
+	thread_local_release(t);
 	t->q = NULL;
 	//t->id = 0;
 
 	// Unlock before retiring - see the note in start_routine_thread_create().
 	release_lock(&t->guard);
 	retire_thread(t->pl, t);
-}
-
-static void do_cancel(thread *t)
-{
-	pthread_t id = t->id;
-	retire_cancelled_thread(t);
-
-#if defined(__ANDROID__)
-	pthread_kill(id, 0);
-#else
-	pthread_cancel(id);
-#endif
 }
 
 // pthread_join() has no timed variant, so it runs on a throwaway helper
@@ -1570,6 +1653,8 @@ static bool cancel_and_join(pthread_t id, uint64_t deadline)
 #endif
 }
 
+static bool bif_thread_exit_1(query *q);
+
 static bool bif_thread_cancel_1(query *q)
 {
 	THREAD_DEBUG DUMP_TERM("*** ", q->st.instr, q->st.cur_ctx, 1);
@@ -1589,7 +1674,26 @@ static bool bif_thread_cancel_1(query *q)
 	if (!is_threaded(t))
 		return throw_error(q, p1, p1_ctx, "permission_error", "cancel,not_thread");
 
-	do_cancel(t);
+	// Cancel by asking, not by force. Freeing the thread's query and then
+	// calling pthread_cancel() crashed: a thread computing reaches no
+	// cancellation point, so it ran on over the freed query. A signal
+	// reaches it busy or blocked, thread_exit/1 can't be caught, and the
+	// thread unwinds itself, running its at_exit goal. Detached, unless a
+	// join is already waiting, so it still goes away without one.
+
+	acquire_lock(&t->guard);
+
+	if (!t->is_joining && !t->is_detached && t->is_active) {
+		t->is_detached = true;
+		pthread_detach(t->id);
+	}
+
+	release_lock(&t->guard);
+	cell goal[2];
+	make_instr(goal, new_atom(q->pl, "thread_exit"), bif_thread_exit_1, 1, 1);
+	make_atom(goal+1, new_atom(q->pl, "cancelled"));
+	CHECKED(queue_to_chan(t, goal, q->my_chan, true));
+	resume_thread(t);
 	THREAD_DEBUG DUMP_TERM(" -  ", q->st.instr, q->st.cur_ctx, 1);
 	return true;
 }
@@ -1613,10 +1717,21 @@ static bool bif_thread_detach_1(query *q)
 	if (!is_threaded(t))
 		return throw_error(q, p1, p1_ctx, "permission_error", "detach,not_thread");
 
+	// As in SWI, a thread another is already joining can't be detached.
+
+	acquire_lock(&t->guard);
+
+	if (t->is_joining) {
+		release_lock(&t->guard);
+		return throw_error(q, p1, p1_ctx, "permission_error", "detach,thread");
+	}
+
 	if (t->is_active) {
 		t->is_detached = true;
 		pthread_detach(t->id);
 	}
+
+	release_lock(&t->guard);
 
 	THREAD_DEBUG DUMP_TERM(" -  ", q->st.instr, q->st.cur_ctx, 1);
 	return true;
@@ -2650,8 +2765,8 @@ void thread_cancel_all(prolog *pl)
 	// server's accept loop) after a pass has gone by it, and
 	// threads_destroy() frees every struct unconditionally once this
 	// returns. Joinable threads are cancelled and joined here (unlike
-	// do_cancel(), used by the live thread_cancel/1 builtin, which
-	// doesn't need to wait since nothing else frees that struct).
+	// thread_cancel/1, which asks the thread to exit by signal and
+	// leaves it to retire itself).
 	// Detached threads can't be joined, so they just get a bounded wait
 	// to self-retire.
 

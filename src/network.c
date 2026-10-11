@@ -21,6 +21,7 @@
 #if USE_OPENSSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
 static int g_ctx_use_cnt = 0;
 static SSL_CTX *g_ctx = NULL;
 #if OPENSSL_VERSION_NUMBER > 0x10100000L
@@ -339,23 +340,40 @@ int tpl_accept(stream *str, char **addr, int *port)
 {
 #if !defined(_WIN32) && !defined(__wasi__)
 	NET_CHECK_METAL();
-	struct sockaddr_in sa = {0};
-	socklen_t len = sizeof(sa);
-	int fd = accept(fileno(str->fp_in), (struct sockaddr*)&sa, &len);
+	struct sockaddr_storage ss = {0};
+	socklen_t len = sizeof(ss);
+	int fd = accept(fileno(str->fp_in), (struct sockaddr*)&ss, &len);
 
 	// FIX 9: any accept() failure leaves fd == -1; bail before touching it so
 	// setsockopt() is never called on an invalid descriptor.
 	if (fd == -1)
 		return -1;
 
-	if (addr) {
-		char buf[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf));
-		*addr = TPL_strdup(buf);
+	// A dual-stack listener is IPv6: give its IPv4 peers, which arrive as
+	// ::ffff:a.b.c.d, in their plain IPv4 form.
+
+	char buf[INET6_ADDRSTRLEN] = "";
+	unsigned peer_port = 0;
+
+	if (ss.ss_family == AF_INET6) {
+		const struct sockaddr_in6 *sa6 = (const struct sockaddr_in6*)&ss;
+		peer_port = ntohs(sa6->sin6_port);
+
+		if (IN6_IS_ADDR_V4MAPPED(&sa6->sin6_addr))
+			inet_ntop(AF_INET, &sa6->sin6_addr.s6_addr[12], buf, sizeof(buf));
+		else
+			inet_ntop(AF_INET6, &sa6->sin6_addr, buf, sizeof(buf));
+	} else if (ss.ss_family == AF_INET) {
+		const struct sockaddr_in *sa = (const struct sockaddr_in*)&ss;
+		peer_port = ntohs(sa->sin_port);
+		inet_ntop(AF_INET, &sa->sin_addr, buf, sizeof(buf));
 	}
 
+	if (addr)
+		*addr = TPL_strdup(buf);
+
 	if (port)
-		*port = ntohs(sa.sin_port);
+		*port = peer_port;
 
 	struct linger l;
 	l.l_onoff = 0;
@@ -391,61 +409,103 @@ static void tpl_set_blocking(stream *str)
 #endif
 }
 
-void *tpl_enable_ssl(int fd, const char *hostname, bool is_server, int level, const char *certfile)
-{
 #if USE_OPENSSL
-	if (!g_ctx_use_cnt++) {
-		SSL_load_error_strings();
-		g_ctx = SSL_CTX_new(is_server?TLS_SERVER_METHOD_FUNC():TLS_CLIENT_METHOD_FUNC());
-		//SSL_CTX_set_cipher_list(g_ctx, DEFAULT_CIPHERS);
+// A client gets its own context, so verification settings never leak into
+// the server's shared one, and the SSL keeps it alive until SSL_free().
+
+static SSL *client_ssl(int fd, const char *hostname, bool verify, const char *cafile, const char **reason)
+{
+	SSL_CTX *ctx = SSL_CTX_new(TLS_CLIENT_METHOD_FUNC());
+
+	if (!ctx) {
+		*reason = "handshake_failed";
+		return NULL;
 	}
 
-	SSL *ssl = SSL_new(g_ctx);
-	SSL_set_ssl_method(ssl, is_server?TLS_SERVER_METHOD_FUNC():TLS_CLIENT_METHOD_FUNC());
-	//SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-	//SSL_set_verify(ssl, SSL_VERIFY_NONE, 0);
-
-	if (!is_server && certfile) {
-		if (!SSL_CTX_use_certificate_file(g_ctx, certfile, SSL_FILETYPE_PEM)) {
-			printf("SSL load certificate failed\n");
-			ERR_print_errors_fp(stderr);
-			close(fd);
-			SSL_free(ssl);
+	if (verify) {
+		if (cafile ? !SSL_CTX_load_verify_locations(ctx, cafile, NULL) : !SSL_CTX_set_default_verify_paths(ctx)) {
+			SSL_CTX_free(ctx);
+			ERR_clear_error();
+			*reason = "cacert_load_failed";
 			return NULL;
 		}
 
-		SSL_CTX_set_default_verify_paths(g_ctx);
-
-		if (level > 0)
-			SSL_set_verify(ssl, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, 0);
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 	}
+
+	SSL *ssl = SSL_new(ctx);
+	SSL_CTX_free(ctx);
+
+	if (!ssl) {
+		*reason = "handshake_failed";
+		return NULL;
+	}
+
+	// A numeric host is checked against the certificate's IP addresses and,
+	// per RFC 6066, never sent as SNI.
+
+	ASN1_OCTET_STRING *ip = a2i_IPADDRESS(hostname);	// OpenSSL's parser, so no socket headers
+	bool is_ip = ip != NULL;
+	ASN1_OCTET_STRING_free(ip);
+
+	if (verify) {
+		if (is_ip)
+			X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), hostname);
+		else
+			SSL_set1_host(ssl, hostname);
+	}
+
+	if (!is_ip)
+		SSL_set_tlsext_host_name(ssl, hostname);
 
 	SSL_set_fd(ssl, fd);
 
-	if (is_server) {
-		if (SSL_accept(ssl) == -1) {
-			fprintf(stderr, "SSL_accept failed\n");
-			ERR_print_errors_fp(stderr);
-			SSL_free(ssl);
-			return NULL;
-		}
-	} else {
-		SSL_set_tlsext_host_name(ssl, hostname);
-
-		if (SSL_connect(ssl) <= 0) {
-			fprintf(stderr, "SSL_connect failed\n");
-			ERR_print_errors_fp(stderr);
-			SSL_free(ssl);
-			return NULL;
-		}
+	if (SSL_connect(ssl) <= 0) {
+		long v = SSL_get_verify_result(ssl);
+		*reason = v == X509_V_ERR_HOSTNAME_MISMATCH ? "hostname_mismatch"
+			: v == X509_V_ERR_IP_ADDRESS_MISMATCH ? "ip_address_mismatch"
+			: v != X509_V_OK ? "certificate_verify_failed"
+			: "handshake_failed";
+		SSL_free(ssl);
+		ERR_clear_error();
+		return NULL;
 	}
+
+	return ssl;
+}
+#endif
+
+void *tpl_enable_ssl(int fd, const char *hostname, bool is_server, bool verify, const char *cafile, const char **reason)
+{
+	*reason = NULL;
+
+#if USE_OPENSSL
+	if (!is_server)
+		return client_ssl(fd, hostname, verify, cafile, reason);
+
+	if (!g_ctx_use_cnt++) {
+		SSL_load_error_strings();
+		g_ctx = SSL_CTX_new(TLS_SERVER_METHOD_FUNC());
+	}
+
+	SSL *ssl = SSL_new(g_ctx);
+	SSL_set_fd(ssl, fd);
+
+	if (SSL_accept(ssl) == -1) {
+		fprintf(stderr, "SSL_accept failed\n");
+		ERR_print_errors_fp(stderr);
+		SSL_free(ssl);
+		return NULL;
+	}
+
 	return ssl;
 #else
 	(void) fd;
 	(void) hostname;
 	(void) is_server;
-	(void) level;
-	(void) certfile;
+	(void) verify;
+	(void) cafile;
+	*reason = "unavailable";
 	return NULL;
 #endif
 }
@@ -893,10 +953,12 @@ int tpl_close(stream *str)
 {
 #if USE_OPENSSL
 	if (str->ssl) {
+		// Only server-side streams hold a count on the shared server context.
+		bool is_client = str->sslptr && !SSL_is_server((SSL*)str->sslptr);
 		SSL_shutdown((SSL*)str->sslptr);
 		SSL_free((SSL*)str->sslptr);
 
-		if (!--g_ctx_use_cnt) {
+		if (!is_client && !--g_ctx_use_cnt) {
 			SSL_CTX_free(g_ctx);
 			g_ctx = NULL;
 		}
@@ -915,6 +977,7 @@ int tpl_close(stream *str)
 			// was ever actually drained to the kernel. This fd is going
 			// away regardless, so there is no cost to blocking here
 			// instead of dropping the tail of the stream.
+			str->is_closing = true;
 			tpl_set_blocking(str);
 			fflush(str->fp_out);
 #if !defined(_WIN32) && !defined(__wasi__)
@@ -1127,6 +1190,45 @@ bool tpl_host_address(const char *hostname, char *ip, size_t iplen)
 	return ok;
 #else
 	return false;
+#endif
+}
+
+// Every address the resolver gives for hostname, as numeric strings and each
+// once, so a caller can vet them all before connecting to one of them.
+
+unsigned tpl_host_addresses(const char *hostname, char ips[][64], unsigned max)
+{
+#if !defined(_WIN32) && !defined(__wasi__)
+	struct addrinfo hints, *result;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+
+	if (getaddrinfo(hostname, NULL, &hints, &result) != 0)
+		return 0;
+
+	unsigned n = 0;
+
+	for (struct addrinfo *rp = result; rp && (n < max); rp = rp->ai_next) {
+		if (getnameinfo(rp->ai_addr, rp->ai_addrlen, ips[n], 64, NULL, 0, NI_NUMERICHOST))
+			continue;
+
+		bool seen = false;
+
+		for (unsigned i = 0; (i < n) && !seen; i++)
+			seen = !strcmp(ips[i], ips[n]);
+
+		if (!seen)
+			n++;
+	}
+
+	freeaddrinfo(result);
+	return n;
+#else
+	(void) hostname;
+	(void) ips;
+	(void) max;
+	return 0;
 #endif
 }
 

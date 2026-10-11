@@ -1,0 +1,13 @@
+user- ===> - none
+user-(<~>)-sees(700,xfx)
+user-(<<=>>)-sees(700,xfx)
+no_parse('a ===> b')
+parsed(a<~>b)
+opm1- ===> - sees(700,xfx)
+opm1-(<~>)-sees(700,xfx)
+opm1-(<<=>>)-sees(700,xfx)
+opm1_parsed_its_own
+opm3-(=)-none
+user-(=)-sees(700,xfx)
+user- ~~> - none
+parsed(x=y)

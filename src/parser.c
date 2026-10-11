@@ -520,7 +520,7 @@ char *relative_to(const char *basefile, const char *relfile)
 	return tmpbuf;
 }
 
-static void do_op(parser *p, cell *c, bool make_public)
+static void do_op(parser *p, cell *c, bool make_public, bool exported)
 {
 	cell *p1 = c + 1, *p2 = c + 2, *p3 = c + 3;
 
@@ -593,6 +593,9 @@ static void do_op(parser *p, cell *c, bool make_public)
 				continue;
 			}
 
+			if (exported)
+				export_op(p->m, name, specifier);
+
 			if (make_public) {
 				if (!set_op(p->pl->user_m, name, specifier, get_smallint(p1))) {
 					if (!p->do_read_term)
@@ -637,6 +640,9 @@ static void do_op(parser *p, cell *c, bool make_public)
 			TPL_free(name);
 			return;
 		}
+
+		if (exported)
+			export_op(p->m, name, specifier);
 
 		if (make_public) {
 			if (!set_op(p->pl->user_m, name, specifier, get_smallint(p1))) {
@@ -1522,7 +1528,31 @@ static bool directive_term(parser *p, cell *c)
 		query q = (query){0};
 		q.pl = p->pl;
 		q.st.m = p->m;
-		char *dst = print_term_to_strbuf(&q, p1, p1_ctx, 0);
+		char *dst;
+
+		// Argument by argument, so an operator name doesn't print infix.
+
+		if (get_arity(p1)) {
+			SB_alloc(sb, 256);
+			SB_strcat(sb, C_STR(p, p1));
+			SB_strcat(sb, "(");
+			cell *arg = p1 + 1;
+
+			for (unsigned i = 0; i < get_arity(p1); i++, arg += arg->num_cells) {
+				char *s = print_term_to_strbuf(&q, arg, p1_ctx, 0);
+				ENSURE(s);
+				if (i) SB_strcat(sb, ",");
+				SB_strcat(sb, s);
+				TPL_free(s);
+			}
+
+			SB_strcat(sb, ")");
+			dst = TPL_strdup(SB_cstr(sb));
+			SB_free(sb);
+		} else
+			dst = print_term_to_strbuf(&q, p1, p1_ctx, 0);
+
+		ENSURE(dst);
 		builtins *ptr = TPL_calloc(1, sizeof(builtins));
 		ENSURE(ptr);
 		ptr->name = TPL_strdup(C_STR(p, p1));
@@ -1641,6 +1671,7 @@ static bool directive_term(parser *p, cell *c)
 		}
 
 		tmp_m = module_create(p->pl, name);
+		if (tmp_m) tmp_m->from_file = true;
 		if (!tmp_m) {
 			if (!p->do_read_term)
 				fprintf(stderr, "Error: module creation failed: %s, %s:%d\n", name, get_loaded(p->m, p->m->filename), p->line_num);
@@ -1731,6 +1762,7 @@ static bool directive_term(parser *p, cell *c)
 			}
 
 			tmp_m = module_create(p->pl, name);
+			if (tmp_m) tmp_m->from_file = true;
 
 			if (!tmp_m) {
 				if (!p->do_read_term)
@@ -1782,9 +1814,8 @@ static bool directive_term(parser *p, cell *c)
 
 					pr->is_public = true;
 				} else if (!strcmp(C_STR(p, head), "op") && (get_arity(head) == 3)) {
-					// Keep exported operators in their declaring module. Importers
-					// find them through search_op() after use_module/1.
-					do_op(p, head, false);
+					// Kept in the declaring module, marked so that importers see it.
+					do_op(p, head, false, true);
 				} else {
 					if (!p->do_read_term)
 						fprintf(stderr, "Error: predicate export failed, '%s' in %s:%d\n", C_STR(p, head), get_loaded(p->m, p->m->filename), p->line_num);
@@ -1913,7 +1944,7 @@ static bool directive_term(parser *p, cell *c)
 	}
 
 	if (!strcmp(dirname, "op") && (get_arity(c) == 3)) {
-		do_op(p, c, false);
+		do_op(p, c, false, false);
 		return true;
 	}
 
@@ -3443,10 +3474,8 @@ static void expand_meta_predicate(parser *p, predicate *pr, cell *goal)
 	for (cell *k = goal+1, *m = pr->meta_args+1; arity--; k += k->num_cells, m += m->num_cells) {
 		cell tmpbuf[2];
 
-		if (is_interned(k) && ((k->val_off == g_call_s) || (k->val_off == g_once_s) || (k->val_off == g_ignore_s)))
-			continue;
-		else if ((get_arity(k) == 2) && (k->val_off == g_colon_s) && is_atom(FIRST_ARG(k)))
-			continue;
+		if ((get_arity(k) == 2) && (k->val_off == g_colon_s) && (is_atom(FIRST_ARG(k)) || is_var(FIRST_ARG(k))))
+			continue;		// a variable module is left to the call, by when it's bound
 		else if (!is_interned(k) || is_iso_list(k))
 			continue;
 		else if (is_interned(m) && (m->val_off == g_colon_s)) {

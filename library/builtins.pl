@@ -88,9 +88,146 @@ bb_get(K, T) :-
 bb_delete(K, T) :-
 	'$bb_delete'(K, '$bb'(T)).
 
+% call_with_inference_limit/3 as SWI has it: Result is ! for a deterministic
+% success, true with choicepoints left, inference_limit_exceeded when the
+% limit is hit, which the innermost call reports. A limit set inside another
+% is the smaller of the two; the outer one is back on exit, failure, an
+% exception, and the goal's own again when it is retried.
+
+:- help(call_with_inference_limit(:callable,+integer,-term), [iso(false)]).
+:- meta_predicate(call_with_inference_limit(0,+,-)).
+
+call_with_inference_limit(G, L, R) :-
+	must_be(L, integer, call_with_inference_limit/3, _),
+	(	L < 0 ->
+		throw(error(domain_error(not_less_than_zero, L), call_with_inference_limit/3))
+	;	L =:= 0 ->
+		R = inference_limit_exceeded
+	;	'$inference_limit'(Old),
+		catch('$cwil'(G, L, Old, R), E, '$cwil_caught'(E, Old, R))
+	).
+
+% G is charged only for its own goals: the count starts inside
+% call_cleanup/2 right before G, pauses when G exits, keeping what is left,
+% and resumes with that if G is retried.
+
+'$cwil'(G, L, Old, R) :-
+	(	call_cleanup(('$start_inference_limit'(L, Old, _), G), Det = true),
+		'$pause_inference_limit'(Old, Rest)
+	;	'$set_inference_limit'(Old), fail
+	),
+	(	Det == true ->
+		!, R = !
+	;	(	R = true
+		;	'$start_inference_limit'(Rest, Old, _), fail
+		)
+	).
+
+'$cwil_caught'(E, Old, R) :-
+	'$restore_inference_limit'(Old),
+	(	E == '$inference_limit_exceeded' -> R = inference_limit_exceeded ; throw(E) ).
+
+% in_temporary_module(?Module, :Setup, :Goal) as in SWI's library(modules):
+% Setup, then Goal, run in a module made for them, a fresh one if Module is
+% unbound, which goes when Goal is done, as setup_call_cleanup/3 has it.
+% SWI resolves Setup and Goal in the caller and runs them in Module's
+% context; here they run as Module:Setup and Module:Goal. destroy_module/1
+% empties a module: its clauses, operators and blackboard go and its name
+% is free again, though what is needed to keep stale references safe stays.
+
+:- help(in_temporary_module(?atom,:callable,:callable), [iso(false)]).
+:- help(destroy_module(+atom), [iso(false)]).
+
+in_temporary_module(M, Setup, Goal) :-
+	(	var(M) ->
+		'$fresh_module'(M)
+	;	must_be(M, atom, in_temporary_module/3, _)
+	),
+	setup_call_cleanup(
+		'$create_module'(M),
+		(	call(M:Setup) -> call(M:Goal) ),
+		'$destroy_module'(M)).
+
+destroy_module(M) :-
+	must_be(M, atom, destroy_module/1, _),
+	'$destroy_module'(M).
+
+'$fresh_module'(M) :-
+	flag('$tmp_module', N, N+1),
+	format(atom(M0), '$tmp_module_~d', [N]),
+	(	current_module(M0) -> '$fresh_module'(M) ; M = M0 ).
+
+% flag/3 as SWI has it. New is an atom or is evaluated; '$flag_cas' only
+% sets it if no other thread got in first, else this retries from a fresh read.
+
+:- help(flag(+term,?term,+term), [iso(false)]).
+
+flag(Key, Old, New) :-
+	repeat,
+	'$flag_get'(Key, V0),
+	(	Old = V0 ->
+		(atom(New) -> V = New ; V is New),
+		'$flag_cas'(Key, V0, V),
+		!
+	;	!, fail
+	).
+
+% SWI's global variables, which are the calling thread's own.
+
+:- help(b_setval(+atom,+term), [iso(false)]).
+:- help(nb_setval(+atom,+term), [iso(false)]).
+:- help(b_getval(+atom,?term), [iso(false)]).
+:- help(nb_getval(+atom,?term), [iso(false)]).
+
+b_setval(K, V) :- '$gvar_put'(K, '$bb'(V), true).
+nb_setval(K, V) :- '$gvar_put'(K, '$bb'(V), false).
+b_getval(K, V) :- '$gvar_get'(K, '$bb'(V)).
+nb_getval(K, V) :- '$gvar_get'(K, '$bb'(V)).
+
+:- help(nb_current(?atom,?term), [iso(false)]).
+:- help(nb_delete(+atom), [iso(false)]).
+
+nb_current(K, V) :-
+	(	atom(K) -> catch('$gvar_get'(K, '$bb'(V)), error(existence_error(_, _), _), fail)
+	;	var(K) -> '$gvar_keys'(Ks),
+		member(K, Ks),
+		'$gvar_get'(K, '$bb'(V))
+	;	throw(error(type_error(atom, K), nb_current/2))
+	).
+
+nb_delete(K) :- '$gvar_del'(K).
+
+% SWI's, though with no compound of arity zero here, f() being a syntax error.
+
+:- help(compound_name_arity(?compound,?atomic,?integer), [iso(false)]).
+:- help(compound_name_arguments(?compound,?atomic,?list), [iso(false)]).
+
+compound_name_arity(C, N, A) :-
+	(	nonvar(C) -> must_be(C, compound, compound_name_arity/3, _), functor(C, N, A)
+	;	must_be(N, atomic, compound_name_arity/3, _),
+		must_be(A, integer, compound_name_arity/3, _),
+		(	A > 0 -> functor(C, N, A)
+		;	throw(error(domain_error(not_less_than_one, A), compound_name_arity/3))
+		)
+	).
+
+compound_name_arguments(C, N, Args) :-
+	(	nonvar(C) -> must_be(C, compound, compound_name_arguments/3, _), C =.. [N|Args]
+	;	must_be(N, atomic, compound_name_arguments/3, _),
+		must_be(Args, list, compound_name_arguments/3, _),
+		(	Args = [_|_] -> C =.. [N|Args]
+		;	throw(error(domain_error(non_empty_list, Args), compound_name_arguments/3))
+		)
+	).
+
+:- help(=@=(+term,+term), [iso(false)]).
+:- help(\=@=(+term,+term), [iso(false)]).
+
+A =@= B :- variant(A, B).
+A \=@= B :- \+ variant(A, B).
+
 bb_update(K, O, N) :-
-	'$bb_get'(K, '$bb'(O)),
-	bb_put(K, N).
+	'$bb_update'(K, '$bb'(O), '$bb'(N)).
 
 :- help(writeln(+term), [iso(false),deprecated(true)]).
 :- help(writeln(+stream,+term), [iso(false),deprecated(true)]).
@@ -106,7 +243,7 @@ read_from_chars(Cs, T) :-
 :- help(read_from_chars(+chars,?term), [iso(false)]).
 
 predicate_property(P, A) :-
-	nonvar(P), atom(A), !,
+	nonvar(P), atom(A), \+ '$derived_property'(A), A \== iso, !,
 	must_be(P, callable, predicate_property/2, _),
 	'$legacy_predicate_property'(P, A).
 predicate_property(P, A) :-
@@ -116,9 +253,10 @@ predicate_property(P, A) :-
 	; 	(Controls = [
 			built_in,choice_construct,
 			discontiguous,private,static,
-			dynamic,foreign,multifile,
+			dynamic,foreign,multifile,thread_local,
 			meta_predicate(_),imported_from(_),template(_),
-			iso,visible,tabled
+			iso,visible,tabled,
+			defined,interpreted,number_of_clauses(_),number_of_rules(_)
 			],
 			( memberchk(A, Controls) ->
 				true
@@ -127,10 +265,47 @@ predicate_property(P, A) :-
 		)
 	),
 	must_be(P, callable, predicate_property/2, _),
-	(	P = (M:P2) ->
-		functor(P2, N, Ar), M:'$predicate_property'(N/Ar, predicate, A)
-	;	functor(P, N, Ar), '$predicate_property'(N/Ar, predicate, A)
+	(	var(A) ->
+		(	'$recorded_property'(P, A)
+		;	'$derived_property'(A), '$derived_property'(A, P)
+		)
+	;	'$derived_property'(A) -> '$derived_property'(A, P)
+	;	'$recorded_property'(P, A)
 	).
+
+'$recorded_property'(M:P, A) :- !,
+	functor(P, N, Ar), M:'$predicate_property'(N/Ar, predicate, A).
+'$recorded_property'(P, A) :-
+	functor(P, N, Ar), '$predicate_property'(N/Ar, predicate, A).
+
+% Properties worked out from the predicate itself rather than recorded.
+
+'$derived_property'(defined).
+'$derived_property'(interpreted).
+'$derived_property'(number_of_clauses(_)).
+'$derived_property'(number_of_rules(_)).
+
+'$derived_property'(defined, P) :-
+	once((	'$legacy_predicate_property'(P, built_in)
+		;	'$predicate_home'(P, H), '$predicate_counts'(H, _, _)
+		;	'$legacy_predicate_property'(P, multifile)
+		)).
+'$derived_property'(interpreted, P) :-
+	'$predicate_home'(P, H),
+	'$predicate_counts'(H, _, _), !.
+'$derived_property'(number_of_clauses(N), P) :-
+	'$predicate_home'(P, H),
+	'$predicate_counts'(H, N, _).
+'$derived_property'(number_of_rules(N), P) :-
+	'$predicate_home'(P, H),
+	'$predicate_counts'(H, _, N).
+
+% The module that defines P, if imported, else the one it was asked in.
+
+'$predicate_home'(M:P, H) :- !,
+	(	predicate_property(M:P, imported_from(M2)) -> H = M2:P ; H = M:P ).
+'$predicate_home'(P, H) :-
+	(	predicate_property(P, imported_from(M2)) -> H = M2:P ; H = P ).
 
 :- help(evaluable_property(+callable,+term), [iso(true)]).
 
@@ -327,10 +502,12 @@ dump_attvars_(Any) :-
  * the witness and the list of associated templates.
  */
 % bagof(+Term, +Goal, -List)
-bagof(T, G, L) :-
+bagof(T, G0, L) :-
 	(var(L) -> true; must_be(L, list_or_partial_list, bagof/3, _)),
-	acyclic_term(G),
-	'$free_variable_set'(T^G, H, W),
+	acyclic_term(G0),
+	% The meta-call hands over M:(V^G): free variables come from V^G, the rest is called in M.
+	(	nonvar(G0), G0 = M:G, atom(M) -> H = M:H0 ; G = G0, H = H0 ),
+	'$free_variable_set'(T^G, H0, W),
 	(	W == []
 	->	findall(T, H, L),
 		L \== []
@@ -351,10 +528,12 @@ bagof(T, G, L) :-
  * the witness and the set of associated templates.
  */
 % setof(+Term, +Goal, -List)
-setof(T, G, L) :-
+setof(T, G0, L) :-
 	(var(L) -> true; must_be(L, list_or_partial_list, setof/3, _)),
-	acyclic_term(G),
-	'$free_variable_set'(T^G, H, W),
+	acyclic_term(G0),
+	% The meta-call hands over M:(V^G): free variables come from V^G, the rest is called in M.
+	(	nonvar(G0), G0 = M:G, atom(M) -> H = M:H0 ; G = G0, H = H0 ),
+	'$free_variable_set'(T^G, H0, W),
 	(	W == []
 	->	findall(T, H, L0),
 		L0 \== [],
@@ -651,8 +830,8 @@ pretty(PI) :-
 
 current_op(A, B, C) :- var(A), var(B), var(C),
 	!,
-	( '$ops_dirty' -> (retractall('$op'(_,_,_)),'$load_ops') ; true ),
-	'$op'(C, B, A).
+	'$current_ops'(Ops),
+	member(op(A, B, C), Ops).
 current_op(_, _, C) :- nonvar(C), \+ atom(C),
 	!, throw(error(type_error(atom,C), current_op/3)).
 current_op(_, B, _) :- nonvar(B), \+ atom(B),
@@ -670,8 +849,8 @@ current_op(A, _, _) :- nonvar(A),
 	\+ (A =< 1200),
 	!, throw(error(domain_error(operator_priority, A), current_op/3)).
 current_op(A, B, C) :-
-	( '$ops_dirty' -> (retractall('$op'(_,_,_)),'$load_ops') ; true ),
-	'$op'(C, B, A).
+	'$current_ops'(Ops),
+	member(op(A, B, C), Ops).
 
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

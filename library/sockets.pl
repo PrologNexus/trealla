@@ -20,11 +20,16 @@
 %
 %  * `udp(+Boolean)`: Socket is UDP (default is TCP)
 %  * `ssl(+Boolean)`: Socket is SSL/TLS (default is normal) if TCP
-%  * `certfile(+Filename)`: Certificate file
+%  * `verify(+Boolean)`: With SSL, check the server's certificate chain and that it names the host (default true)
+%  * `cacert(+Filename)`: With SSL, trust the CAs in Filename instead of the system store
+%  * `server_name(+Host)`: With SSL, send Host as the server name (SNI) and verify the certificate against it, rather than the address connected to
 %  * `alias(+Alias)`: Set an alias to the stream
 %  * `eof_action(+Action)`: Defined what happens if the end of the stream is reached. Values: `error`, `eof_code` and `reset`.
 %  * `type(+Type)`: Type can be `text` or `binary`. Defines the type of the stream, if it's optimized for plain text
 %    or just binary
+%
+% A failed check throws `ssl_error(Reason, Address)`, Reason one of `certificate_verify_failed`,
+% `hostname_mismatch`, `ip_address_mismatch`, `cacert_load_failed` or `handshake_failed`.
 %
 % The socket already exists by the time options are applied, so an
 % option error must not leak the fd and the stream slot. Before this,
@@ -75,11 +80,10 @@ socket_client_open(Addr, Stream, Options) :-
 		throw(error(instantiation_error, socket_client_open/3))
 	; true
 	),
-	Addr = Address:Port,
+	Addr = Address:Port, !,
 	must_be(var, Stream),
 	must_be(list, Options),
-	atom(Address),
-	(( atom(Port) ; integer(Port) ) ->
+	(	atom(Address), ( atom(Port) ; integer(Port) ) ->
 		true
 	; throw(error(type_error(socket_address, Addr), socket_client_open/3))
 	),
@@ -146,7 +150,7 @@ socket_server_open(Addr0, ServerSocket, Options) :-
 	atom(Address),
 	( atom(Port) ; integer(Port) ; var(Port) ) ->
 		true
-	; throw(error(type_error(socket_address, Addr), socket_client_open/3))
+	; throw(error(type_error(socket_address, Addr), socket_server_open/3))
 	),
 	'$server'(Addr, ServerSocket, Options),
 	'$sock_opts'(ServerSocket, Options).
@@ -158,7 +162,7 @@ socket_server_open(Addr, ServerSocket, Options) :-
 	atom(Address),
 	(( atom(Port) ; integer(Port) ; var(Port) ) ->
 		true
-	; throw(error(type_error(socket_address, Addr), socket_client_open/3))
+	; throw(error(type_error(socket_address, Addr), socket_server_open/3))
 	),
 	'$server'(Addr, ServerSocket, Options),
 	'$sock_opts'(ServerSocket, Options).
@@ -187,12 +191,14 @@ socket_server_open(Addr0, ServerSocket, Options) :-
 %    or just binary
 %
 socket_server_accept(ServerSocket, Client, Stream, Options) :-
-	must_be(var, Client),
 	must_be(var, Stream),
 	'$accept'(ServerSocket, Stream),
 	'$peer_addr'(Stream, Addr, Port),
-	Client = Addr:Port,
-	'$sock_opts'(Stream, Options).
+	'$sock_opts'(Stream, Options),
+	% Client is an output to unify, so a pattern such as Host:_ works; on a mismatch don't leak the stream
+	(	Client = Addr:Port -> true
+	;	close(Stream), fail
+	).
 
 
 

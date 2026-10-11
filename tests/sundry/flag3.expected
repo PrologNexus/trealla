@@ -1,0 +1,6 @@
+t_count: [0,1,2.5,foo]
+t_compound: 1
+t_int_key: 1
+t_no_update: 0
+t_eval_error: evaluation_error(zero_divisor)-0
+t_big: representation_error(int64_t)

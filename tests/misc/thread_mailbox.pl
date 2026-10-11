@@ -7,7 +7,7 @@
 %
 % Why this file matters more than it looks: phase 1 replaces the condvar
 % wait inside do_match_message() with a task parking on the queue and
-% being woken by the send. That is a rewrite of the mechanism underneath
+% being woken by the task_send. That is a rewrite of the mechanism underneath
 % every property below, and these are the properties that must come out
 % the other side unchanged.
 %
@@ -48,7 +48,7 @@ fifo_order :-
 % of 1,2,3,4 leaves 1,2,4 in that order.
 %
 % This is the property that makes this mailbox worth keeping and the
-% task-side recv/1 not - given the same queue, recv/1 rotates the
+% task-side task_recv/1 not - given the same queue, task_recv/1 rotates the
 % skipped messages to the back and leaves 4,1,2.
 
 selective_receive_preserves_order :-
@@ -236,10 +236,10 @@ runner(N) :- assertz(ran(sib(N))).
 task_receive_yields_to_siblings :-
 	retractall(ran(_)),
 	message_queue_create(Q),
-	call_task(blocker, Q),
-	call_task(runner, 1),
-	call_task(runner, 2),
-	wait,
+	task_call(blocker, Q),
+	task_call(runner, 1),
+	task_call(runner, 2),
+	task_wait,
 	findall(X, ran(X), L),
 	report(task_receive_yields_to_siblings, L, [blocked,sib(1),sib(2),woke]).
 
@@ -251,9 +251,9 @@ poster(Q) :- sleep(0.05), thread_send_message(Q, delivered).
 parked_task_still_receives :-
 	retractall(ran(_)),
 	message_queue_create(Q),
-	call_task(waiter, Q),
-	call_task(poster, Q),
-	wait,
+	task_call(waiter, Q),
+	task_call(poster, Q),
+	task_wait,
 	findall(X, ran(X), L),
 	report(parked_task_still_receives, L, [got(delivered)]).
 
@@ -262,7 +262,7 @@ parked_task_still_receives :-
 % Tasks are scheduled per thread object. GUSTTO phase 0 moved the
 % scheduler off the query - correctly, since one that dies with its
 % spawner cannot outlive it - but put it on the prolog instance, which
-% went a step too far: two threads each calling wait/0 then drove one
+% went a step too far: two threads each calling task_wait/0 then drove one
 % set of queues with nothing serialising them, and this crashed six runs
 % in ten with SIGSEGV, SIGBUS or SIGABRT. A thread object owns its run
 % queue now, so there is nothing shared to corrupt.
@@ -271,16 +271,16 @@ parked_task_still_receives :-
 % at all, and does so every time rather than most times.
 
 spawner(Tag) :-
-	forall(between(1,40,I), call_task(noop, Tag-I)),
-	wait.
+	forall(between(1,40,I), task_call(noop, Tag-I)),
+	task_wait.
 
 noop(_).
 
 concurrent_task_drain :-
 	thread_create(spawner(a), T1, []),
 	thread_create(spawner(b), T2, []),
-	forall(between(1,40,I), call_task(noop, main-I)),
-	wait,
+	forall(between(1,40,I), task_call(noop, main-I)),
+	task_wait,
 	thread_join(T1, S1),
 	thread_join(T2, S2),
 	report(concurrent_task_drain, S1-S2, true-true).

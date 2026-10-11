@@ -7,19 +7,38 @@
 #include "module.h"
 #include "query.h"
 
-static bool module_context(query *q, cell **p1, pl_ctx p1_ctx)
+// Strip M: from *p1, setting *mp to M, or to NULL when unqualified. False
+// means stop and return *status: a throw that found a catcher returns true.
+// A module that doesn't exist has no clauses, so as in SWI and Scryer the
+// call just gives if_missing.
+
+static void abolish_predicate(query *q, predicate *pr, bool hard);
+
+static bool module_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, bool *status, bool if_missing)
 {
+	*mp = NULL;
+
 	if (!is_var(*p1)) {
-		if ((*p1)->val_off == g_colon_s) {
-			*p1 = *p1 + 1;
-			cell *cm = deref(q, *p1, p1_ctx);
+		if (((*p1)->val_off == g_colon_s) && (get_arity(*p1) == 2)) {
+			cell *cm = deref(q, *p1 + 1, *p1_ctx);
+
+			if (is_var(cm)) {
+				*status = throw_error(q, cm, q->latest_ctx, "instantiation_error", "module");
+				return false;
+			}
+
 			module *m = find_module(q->pl, C_STR(q, cm));
 
 			if (!m) {
-				return throw_error(q, cm, p1_ctx, "existence_error", "module");
+				*status = if_missing;
+				return false;
 			}
 
-			*p1 += (*p1)->num_cells;
+			cell *h = *p1 + 1;
+			h += h->num_cells;
+			*p1 = deref(q, h, *p1_ctx);
+			*p1_ctx = q->latest_ctx;
+			*mp = m;
 		}
 	}
 
@@ -60,8 +79,11 @@ static bool bif_clause_3(query *q)
 	GET_NEXT_ARG(p2,callable_or_var);
 	GET_NEXT_ARG(p3,atom_or_var);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
+
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, false))
+		return status;
 
 	if (is_var(p1) && is_var(p2) && is_var(p3))
 		return throw_error(q, p3, p3_ctx, "instantiation_error", "args_not_sufficiently_instantiated");
@@ -72,7 +94,7 @@ static bool bif_clause_3(query *q)
 		clause *cl;
 
 		if (!is_var(p3)) {
-			rule *r = find_in_db(q->st.m, clause_ref_from_buf(C_STR(q, p3)));
+			rule *r = find_in_db(m ? m : q->st.m, clause_ref_from_buf(C_STR(q, p3)));
 
 			if (!r)
 				break;
@@ -88,7 +110,7 @@ static bool bif_clause_3(query *q)
 				break;
 			}
 		} else {
-			if (match_clause(q, p1, p1_ctx, NULL, DO_CLAUSE) != true)
+			if (match_clause(q, m, p1, p1_ctx, NULL, DO_CLAUSE) != true)
 				break;
 
 			char tmpbuf[128];
@@ -141,17 +163,20 @@ static bool bif_clause_3(query *q)
 	return false;
 }
 
-static bool bif_iso_clause_2(query *q)
+static bool do_clause_2(query *q, enum clause_type type)
 {
 	GET_FIRST_ARG(p1,callable);
 	GET_NEXT_ARG(p2,callable_or_var);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
+
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, false))
+		return status;
 
 	cell *body;
 
-	while (match_clause(q, p1, p1_ctx, &body, DO_CLAUSE)) {
+	while (match_clause(q, m, p1, p1_ctx, &body, type)) {
 		if (q->did_throw) return true;
 		bool ok;
 
@@ -179,6 +204,19 @@ static bool bif_iso_clause_2(query *q)
 	}
 
 	return false;
+}
+
+static bool bif_iso_clause_2(query *q)
+{
+	return do_clause_2(q, DO_CLAUSE);
+}
+
+// '$clause'(:Head, ?Body): clause/2 that reads static predicates too, for
+// code analysis such as library(sandbox) does.
+
+static bool bif_sys_clause_2(query *q)
+{
+	return do_clause_2(q, DO_CLAUSE_STATIC);
 }
 
 static void predicate_purge_dirty_list(predicate *pr)
@@ -210,7 +248,7 @@ static void predicate_purge_dirty_list(predicate *pr)
 #endif
 }
 
-bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
+bool do_retract(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 {
 	if (!q->retry) {
 		cell *head = deref(q, get_head(p1), p1_ctx);
@@ -225,10 +263,10 @@ bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 	bool match;
 
 	if (is_a_rule(p1) && get_logical_body(p1)) {
-		match = match_rule(q, p1, p1_ctx, is_retract);
+		match = match_rule(q, m, p1, p1_ctx, is_retract);
 	} else {
 		cell *head = get_head(p1);
-		match = match_clause(q, head, p1_ctx, NULL, is_retract);
+		match = match_clause(q, m, head, p1_ctx, NULL, is_retract);
 	}
 
 	if (!match || q->did_throw)
@@ -244,16 +282,239 @@ bool do_retract(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 	return true;
 }
 
+// For retract((M:H :- B)): rebuild it as (H :- B), setting *mp to M.
+
+static bool rule_head_context(query *q, cell **p1, pl_ctx *p1_ctx, module **mp, bool *status)
+{
+	if (*mp || ((*p1)->val_off != g_neck_s) || (get_arity(*p1) != 2))
+		return true;
+
+	cell *h = deref(q, *p1 + 1, *p1_ctx);
+	pl_ctx h_ctx = q->latest_ctx;
+
+	if ((h->val_off != g_colon_s) || (get_arity(h) != 2))
+		return true;
+
+	cell *cm = deref(q, h + 1, h_ctx);
+
+	if (is_var(cm)) {
+		*status = throw_error(q, cm, q->latest_ctx, "instantiation_error", "module");
+		return false;
+	}
+
+	if (!(*mp = find_module(q->pl, C_STR(q, cm)))) {
+		*status = false;
+		return false;
+	}
+
+	cell *hh = h + 1;
+	hh += hh->num_cells;
+	hh = deref(q, hh, h_ctx);
+	pl_ctx hh_ctx = q->latest_ctx;
+	cell *b = *p1 + 1;
+	b += b->num_cells;
+	pl_idx n = 1 + hh->num_cells + b->num_cells;
+	cell *tmp = alloc_heap(q, n);
+
+	if (!tmp) {
+		*status = throw_error(q, *p1, *p1_ctx, "resource_error", "memory");
+		return false;
+	}
+
+	make_instr(tmp, g_neck_s, NULL, 2, n-1);
+	SET_OP(tmp, OP_XFX);
+	dup_cells_by_ref(tmp+1, hh, hh_ctx, hh->num_cells);
+	dup_cells_by_ref(tmp+1+hh->num_cells, b, *p1_ctx, b->num_cells);
+	*p1 = tmp;
+	*p1_ctx = q->st.cur_ctx;
+	return true;
+}
+
+// '$destroy_module'(+Name): emptied rather than freed. Code can hold a
+// cached pointer to one of its predicates, or a frame or a return point
+// its module, so the module and its predicate headers stay, abolished, on
+// pl->dead_modules till exit. Its clauses, indexes, operators, blackboard
+// and imports go, and so does its name, for a new module to take.
+
+static bool bif_sys_destroy_module_1(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	module *m = find_module(q->pl, C_STR(q, p1));
+
+	if (!m)
+		return true;
+
+	if ((m == q->pl->user_m) || (m == q->pl->system_m) || m->prebuilt || m->orig || m->from_file)
+		return throw_error(q, p1, p1_ctx, "permission_error", "destroy,module");
+
+	prolog_lock_mod(q->pl, m);
+
+	for (predicate *pr = list_front(&m->predicates); pr; pr = list_next(pr)) {
+		if (pr->head || pr->cnt)
+			abolish_predicate(q, pr, true);
+		else
+			pr->is_abolished = true;
+	}
+
+	module_clear_tables(m);
+	m->idx_used = 0;
+	prolog_unlock_mod(q->pl, m);
+
+	prolog_lock(q->pl);
+
+	for (module *tmp = list_front(&q->pl->modules); tmp; tmp = list_next(tmp)) {
+		unsigned j = 0;
+
+		for (unsigned i = 0; i < tmp->idx_used; i++) {
+			if (tmp->used[i] != m)
+				tmp->used[j++] = tmp->used[i];
+		}
+
+		tmp->idx_used = j;
+	}
+
+	list_remove(&q->pl->modules, m);
+	m->hdr.prev = m->hdr.next = NULL;
+	m->dead_next = q->pl->dead_modules;
+	q->pl->dead_modules = m;
+	prolog_unlock(q->pl);
+	return true;
+}
+
+// '$create_module'(+Name): an empty module, for in_temporary_module/3.
+
+static bool bif_sys_create_module_1(query *q)
+{
+	GET_FIRST_ARG(p1,atom);
+	module *m = find_module(q->pl, C_STR(q, p1));
+
+	if (m) {
+		for (predicate *pr = list_front(&m->predicates); pr; pr = list_next(pr)) {
+			if (pr->head && strcmp(C_STR(q, &pr->key), "$predicate_property"))
+				return throw_error(q, p1, p1_ctx, "permission_error", "create,module");
+		}
+
+		return true;
+	}
+
+	CHECKED(module_create(q->pl, C_STR(q, p1)));
+	return true;
+}
+
+// thread_local(+Spec), the directive and the predicate: Name/Arity, a list
+// or conjunction of them, or M:Spec. Each becomes dynamic, with the clauses
+// each thread asserts kept to itself (see thread_local_shadow()).
+
+static bool do_thread_local(query *q, cell *c, pl_ctx c_ctx, module *m)
+{
+	c = deref(q, c, c_ctx);
+	c_ctx = q->latest_ctx;
+
+	if (is_var(c))
+		return throw_error(q, c, c_ctx, "instantiation_error", "predicate_indicator");
+
+	if (is_iso_list(c)) {
+		cell *h = c + 1, *t = h + h->num_cells;
+		return do_thread_local(q, h, c_ctx, m) && do_thread_local(q, t, c_ctx, m);
+	}
+
+	if (is_nil(c))
+		return true;
+
+	if (is_interned(c) && (get_arity(c) == 2) && (c->val_off == g_conjunction_s)) {
+		cell *h = c + 1, *t = h + h->num_cells;
+		return do_thread_local(q, h, c_ctx, m) && do_thread_local(q, t, c_ctx, m);
+	}
+
+	if (is_interned(c) && (get_arity(c) == 2) && (c->val_off == g_colon_s)) {
+		cell *cm = deref(q, c + 1, c_ctx);
+
+		if (!is_atom(cm))
+			return throw_error(q, cm, q->latest_ctx, "type_error", "module");
+
+		module *m2 = find_module(q->pl, C_STR(q, cm));
+
+		if (!m2 && !(m2 = module_create(q->pl, C_STR(q, cm))))
+			return throw_error(q, cm, q->latest_ctx, "resource_error", "memory");
+
+		cell *spec = c + 1;
+		spec += spec->num_cells;
+		return do_thread_local(q, spec, c_ctx, m2);
+	}
+
+	if (!is_interned(c) || (get_arity(c) != 2) || CMP_STRING_TO_CSTR(q, c, "/"))
+		return throw_error(q, c, c_ctx, "type_error", "predicate_indicator");
+
+	cell *name = deref(q, c + 1, c_ctx);
+	pl_ctx name_ctx = q->latest_ctx;
+	cell *arity = c + 1;
+	arity += arity->num_cells;
+	arity = deref(q, arity, c_ctx);
+	pl_ctx arity_ctx = q->latest_ctx;
+
+	if (is_var(name) || is_var(arity))
+		return throw_error(q, c, c_ctx, "instantiation_error", "predicate_indicator");
+
+	if (!is_atom(name))
+		return throw_error(q, name, name_ctx, "type_error", "atom");
+
+	if (!is_smallint(arity))
+		return throw_error(q, arity, arity_ctx, "type_error", "integer");
+
+	if (get_smallint(arity) < 0)
+		return throw_error(q, arity, arity_ctx, "domain_error", "not_less_than_zero");
+
+	const char *src = C_STR(q, name);
+	unsigned n = (unsigned)get_smallint(arity);
+	cell key = (cell){0};
+	key.tag = TAG_INTERNED;
+	key.val_off = new_atom(q->pl, src);
+	set_arity(&key, n);
+	prolog_lock_mod(q->pl, m);
+	predicate *pr = find_predicate(m, &key);
+
+	if (pr && !pr->is_dynamic && pr->head) {
+		prolog_unlock_mod(q->pl, m);
+		cell pi[3];										// Name/Arity, as abolish/1 reports it
+		make_instr(pi, g_slash_s, NULL, 2, 2);
+		make_atom(pi+1, key.val_off);
+		make_int(pi+2, n);
+		return throw_error(q, pi, q->st.cur_ctx, "permission_error", "modify,static_procedure");
+	}
+
+	set_dynamic_in_db(m, src, n);
+	pr = find_predicate(m, &key);
+
+	if (pr && !pr->is_thread_local) {
+		pr->is_thread_local = true;
+		push_property(m, src, n, "thread_local");
+	}
+
+	prolog_unlock_mod(q->pl, m);
+	return pr ? true : throw_error(q, c, c_ctx, "resource_error", "memory");
+}
+
+static bool bif_thread_local_1(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	return do_thread_local(q, p1, p1_ctx, q->st.m);
+}
+
 static bool bif_iso_retract_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
 
-	prolog_lock_mod(q->pl, q->st.m);
-	bool ok = do_retract(q, p1, p1_ctx, DO_RETRACT);
-	prolog_unlock_mod(q->pl, q->st.m);
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, false)
+		|| !rule_head_context(q, &p1, &p1_ctx, &m, &status))
+		return status;
+
+	module *lm = m ? m : q->st.m;
+	prolog_lock_mod(q->pl, lm);
+	bool ok = do_retract(q, m, p1, p1_ctx, DO_RETRACT);
+	prolog_unlock_mod(q->pl, lm);
 	return ok;
 }
 
@@ -261,16 +522,23 @@ static bool bif_iso_retractall_1(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
 
-	if (!module_context(q, &p1, p1_ctx))
-		return false;
+	module *m;
+	bool status;
 
+	if (!module_context(q, &p1, &p1_ctx, &m, &status, true))
+		return status;
+
+	module *lm = m ? m : q->st.m;
 	cell *head = deref(q, get_head(p1), p1_ctx);
-	predicate *pr = search_predicate(q->st.m, head);
+	predicate *pr = search_predicate(lm, head);
+
+	if (pr && pr->is_thread_local)
+		pr = thread_local_shadow(pr);
 
 	if (!pr) {
 		bool found = false;
 
-		if (get_builtin_term(q->st.m, head, &found, NULL), found)
+		if (get_builtin_term(lm, head, &found, NULL), found)
 			return throw_error(q, head, q->latest_ctx, "permission_error", "modify,static_procedure");
 
 		return true;
@@ -279,11 +547,11 @@ static bool bif_iso_retractall_1(query *q)
 	if (!pr->cnt)
 		return true;
 
-	prolog_lock_mod(q->pl, q->st.m);
+	prolog_lock_mod(q->pl, lm);
 
-	while (do_retract(q, p1, p1_ctx, DO_RETRACTALL)) {
+	while (do_retract(q, m, p1, p1_ctx, DO_RETRACTALL)) {
 		if (q->did_throw) {
-			prolog_unlock_mod(q->pl, q->st.m);
+			prolog_unlock_mod(q->pl, lm);
 			return true;
 		}
 
@@ -293,18 +561,15 @@ static bool bif_iso_retractall_1(query *q)
 	}
 
 	pr->is_processed = false;
-	prolog_unlock_mod(q->pl, q->st.m);
+	prolog_unlock_mod(q->pl, lm);
 	return true;
 }
 
-bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
+// Every clause of pr retracted and reclaimed, its index freed, and with
+// hard, pr marked abolished, which a stale cached pointer to it can see.
+
+static void abolish_predicate(query *q, predicate *pr, bool hard)
 {
-	predicate *pr = search_predicate(q->st.m, c_pi);
-	if (!pr) return true;
-
-	if (!pr->is_dynamic)
-		return throw_error(q, c_orig, q->st.cur_ctx, "permission_error", "modify,static_procedure");
-
 	for (rule *r = pr->head; r; r = r->next)
 		retract_from_db(r->owner->m, r);
 
@@ -335,6 +600,17 @@ bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
 	if (hard)
 		pr->is_abolished = true;
 
+}
+
+bool do_abolish(query *q, cell *c_orig, cell *c_pi, bool hard)
+{
+	predicate *pr = search_predicate(q->st.m, c_pi);
+	if (!pr) return true;
+
+	if (!pr->is_dynamic)
+		return throw_error(q, c_orig, q->st.cur_ctx, "permission_error", "modify,static_procedure");
+
+	abolish_predicate(q, pr, hard);
 	return true;
 }
 
@@ -999,9 +1275,13 @@ static bool bif_listing_0(query *q)
 	return true;
 }
 
-static bool save_name(FILE *fp, query *q, pl_idx name, pl_int arity, bool alt, bool dump)
+// List from m, as given by M:PI, else the module the call is running in.
+
+static bool save_name(FILE *fp, query *q, module *m, pl_idx name, pl_int arity, bool alt, bool dump)
 {
-	module *m = q->st.dbe ? q->st.dbe->owner->m : q->st.m;
+	if (!m)
+		m = q->st.dbe ? q->st.dbe->owner->m : q->st.m;
+
 	q->listing = true;
 	bool any = false;
 
@@ -1058,15 +1338,20 @@ static bool bif_listing_1(query *q)
 	pl_idx name = p1->val_off;
 	pl_int arity = -1;
 
+	module *m = NULL;
+
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
-		module *m = find_module(q->pl, C_STR(q, cm));
+		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
 			return throw_error(q, cm, p1_ctx, "existence_error", "module");
 
 		p1 += p1->num_cells;
+		p1 = deref(q, p1, p1_ctx);
+		p1_ctx = q->latest_ctx;
+		name = p1->val_off;
 	}
 
 	if (get_arity(p1)) {
@@ -1102,7 +1387,7 @@ static bool bif_listing_1(query *q)
 
 	int n = q->pl->current_output;
 	stream *str = &q->pl->streams[n];
-	return save_name(str->fp, q, name, arity, false, false);
+	return save_name(str->fp, q, m, name, arity, false, false);
 }
 
 static bool bif_sys_xlisting_1(query *q)
@@ -1111,15 +1396,20 @@ static bool bif_sys_xlisting_1(query *q)
 	pl_idx name = p1->val_off;
 	pl_int arity = -1;
 
+	module *m = NULL;
+
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
-		module *m = find_module(q->pl, C_STR(q, cm));
+		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
 			return throw_error(q, cm, p1_ctx, "existence_error", "module");
 
 		p1 += p1->num_cells;
+		p1 = deref(q, p1, p1_ctx);
+		p1_ctx = q->latest_ctx;
+		name = p1->val_off;
 	}
 
 	if (get_arity(p1)) {
@@ -1155,7 +1445,7 @@ static bool bif_sys_xlisting_1(query *q)
 
 	int n = q->pl->current_output;
 	stream *str = &q->pl->streams[n];
-	save_name(str->fp, q, name, arity, true, false);
+	save_name(str->fp, q, m, name, arity, true, false);
 	fprintf(str->fp, "\n");
 	return true;
 }
@@ -1176,15 +1466,20 @@ static bool bif_sys_dlisting_1(query *q)
 	pl_idx name = p1->val_off;
 	pl_int arity = -1;
 
+	module *m = NULL;
+
 	if (p1->val_off == g_colon_s) {
 		p1 = p1 + 1;
 		cell *cm = deref(q, p1, p1_ctx);
-		module *m = find_module(q->pl, C_STR(q, cm));
+		m = find_module(q->pl, C_STR(q, cm));
 
 		if (!m)
 			return throw_error(q, cm, p1_ctx, "existence_error", "module");
 
 		p1 += p1->num_cells;
+		p1 = deref(q, p1, p1_ctx);
+		p1_ctx = q->latest_ctx;
+		name = p1->val_off;
 	}
 
 	if (get_arity(p1)) {
@@ -1220,7 +1515,7 @@ static bool bif_sys_dlisting_1(query *q)
 
 	int n = q->pl->current_output;
 	stream *str = &q->pl->streams[n];
-	save_name(str->fp, q, name, arity, false, true);
+	save_name(str->fp, q, m, name, arity, false, true);
 	fprintf(str->fp, "\n");
 	return true;
 }
@@ -1228,11 +1523,15 @@ static bool bif_sys_dlisting_1(query *q)
 builtins g_database_bifs[] =
 {
 	{"abolish", 1, bif_iso_abolish_1, "+predicate_indicator", true, false, BLAH},
+	{"thread_local", 1, bif_thread_local_1, "+term", false, false, BLAH},
+	{"$destroy_module", 1, bif_sys_destroy_module_1, "+atom", false, false, BLAH},
+	{"$create_module", 1, bif_sys_create_module_1, "+atom", false, false, BLAH},
 	{"asserta", 1, bif_iso_asserta_1, "+term", true, false, BLAH},
 	{"assertz", 1, bif_iso_assertz_1, "+term", true, false, BLAH},
 	{"retract", 1, bif_iso_retract_1, "+term", true, false, BLAH},
 	{"retractall", 1, bif_iso_retractall_1, "+term", true, false, BLAH},
 	{"clause", 2, bif_iso_clause_2, "+term,?term", true, false, BLAH},
+	{"$clause", 2, bif_sys_clause_2, "+term,?term", false, false, BLAH},
 
 	{"asserta", 2, bif_asserta_2, "+term,-string", false, false, BLAH},
 	{"assertz", 2, bif_assertz_2, "+term,-string", false, false, BLAH},

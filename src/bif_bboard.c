@@ -325,14 +325,62 @@ static bool bif_bb_b_put_2(query *q)
 
 	val->flags |= FLAG_LIVE;
 	char *key = TPL_strdup(tmpbuf);
-	CHECKED(key);
-	CHECKED(undo_on_backtrack(q, key, UNDO_BBOARD));
+	CHECKED(key, unshare_cells(val, num_cells); TPL_free(val));
+	CHECKED(undo_bb_on_backtrack(q, m, key), TPL_free(key); unshare_cells(val, num_cells); TPL_free(val));
 
 	prolog_lock(q->pl);
 	sl_set(m->keyval, key, val);
 	prolog_unlock(q->pl);
 
 	return true;
+}
+
+// The stored image of a '$bb'(T) term, for bb_put and bb_update: NULL when
+// out of memory.
+
+static cell *bb_make_value(query *q, cell *p2, pl_ctx p2_ctx)
+{
+	// If the term contains attributed variables, store an augmented
+	// image carrying the raw attributes so they survive the round-trip.
+
+	cell *scratch = NULL;
+	cell *src = p2;
+	pl_ctx src_ctx = p2_ctx;
+
+	if (is_compound(p2) && (get_arity(p2) == 1)) {
+		bb_attv_scan sc;
+
+		if (bb_collect_attv(q, p2+1, p2_ctx, &sc) && sc.num_ents) {
+			scratch = bb_build_attv_image(q, p2, p2+1, p2_ctx, &sc);
+
+			if (scratch) {
+				src = scratch;
+				src_ctx = q->st.cur_ctx;
+			}
+		}
+
+		bb_scan_free(&sc);
+	}
+
+	cell *tmp = init_tmp_heap(q) ? copy_term_to_tmp(q, src, src_ctx, false) : NULL;
+	if (scratch) TPL_free(scratch);
+	if (!tmp) return NULL;
+	pl_idx num_cells = tmp->num_cells;
+	cell *val = TPL_malloc(sizeof(cell)*num_cells);
+	if (!val) return NULL;
+	dup_cells(val, tmp, tmp->num_cells);
+
+	// The entry outlives the mapping any slice in it points into.
+	// Unsliced here, not in the tmp heap: this copy owns the reference the
+	// new string carries, and a slice had none for dup_cells() to share.
+
+	if (!unslice_cells(val, num_cells)) {
+		unshare_cells(val, num_cells);
+		TPL_free(val);
+		return NULL;
+	}
+
+	return val;
 }
 
 static bool bif_bb_put_2(query *q)
@@ -371,48 +419,10 @@ static bool bif_bb_put_2(query *q)
 
 	if (DO_DUMP) DUMP_TERM2("bb_put", tmpbuf2, p2, p2_ctx, 1);
 
-	char *key2 = TPL_strdup(tmpbuf2);
-
-	// If the term contains attributed variables, store an augmented
-	// image carrying the raw attributes so they survive the round-trip.
-
-	cell *scratch = NULL;
-	cell *src = p2;
-	pl_ctx src_ctx = p2_ctx;
-
-	if (is_compound(p2) && (get_arity(p2) == 1)) {
-		bb_attv_scan sc;
-
-		if (bb_collect_attv(q, p2+1, p2_ctx, &sc) && sc.num_ents) {
-			scratch = bb_build_attv_image(q, p2, p2+1, p2_ctx, &sc);
-
-			if (scratch) {
-				src = scratch;
-				src_ctx = q->st.cur_ctx;
-			}
-		}
-
-		bb_scan_free(&sc);
-	}
-
-	CHECKED(init_tmp_heap(q));
-	cell *tmp = copy_term_to_tmp(q, src, src_ctx, false);
-	if (scratch) TPL_free(scratch);
-	CHECKED(tmp);
-	pl_idx num_cells = tmp->num_cells;
-	cell *val = TPL_malloc(sizeof(cell)*num_cells);
+	cell *val = bb_make_value(q, p2, p2_ctx);
 	CHECKED(val);
-	dup_cells(val, tmp, tmp->num_cells);
-
-	// The entry outlives the mapping any slice in it points into.
-	// Unsliced here, not in the tmp heap: this copy owns the reference the
-	// new string carries, and a slice had none for dup_cells() to share.
-
-	if (!unslice_cells(val, num_cells)) {
-		unshare_cells(val, num_cells);
-		TPL_free(val);
-		return throw_error(q, tmp, q->st.cur_ctx, "resource_error", "memory");
-	}
+	char *key2 = TPL_strdup(tmpbuf2);
+	CHECKED(key2, unshare_cells(val, val->num_cells); TPL_free(val));
 
 	prolog_lock(q->pl);
 
@@ -480,13 +490,16 @@ static bool bif_bb_get_2(query *q)
 		}
 	}
 
-	prolog_unlock(q->pl);
-	cell *tmp = val->flags & FLAG_LIVE ?
+	// Copy out before unlocking: a bb_put in another thread frees the old value.
+
+	bool live = val->flags & FLAG_LIVE;
+	cell *tmp = live ?
 		bb_import_term_to_heap(q, val, q->st.cur_ctx) :
 		import_term(q, val, q->st.cur_ctx);
+	prolog_unlock(q->pl);
 	CHECKED(tmp);
 
-	if (!(val->flags & FLAG_LIVE) && is_compound(tmp) && (get_arity(tmp) == 1)) {
+	if (!live && is_compound(tmp) && (get_arity(tmp) == 1)) {
 		tmp = bb_reattach_attv(q, tmp);
 		CHECKED(tmp);
 	}
@@ -570,6 +583,86 @@ static bool bif_bb_delete_2(query *q)
 	return ok;
 }
 
+// '$bb_update'(K, '$bb'(Old), '$bb'(New)) under one hold of the lock, so
+// no other thread's put lands between reading Old and storing New. New is
+// copied after unifying Old, so it sees what that bound.
+
+static bool bif_sys_bb_update_3(query *q)
+{
+	GET_FIRST_ARG(p1,nonvar);
+
+	if (is_compound(p1) &&
+		((p1->val_off != g_colon_s) || (get_arity(p1) != 2)))
+		return throw_error(q, p1, p1_ctx, "type_error", "callable");
+
+	module *m;
+	char tmpbuf1[1024], tmpbuf2[1024];
+
+	if (is_compound(p1)) {
+		cell *p1_m = p1 + 1;
+		p1 = p1_m + p1_m->num_cells;
+
+		if (!is_atom(p1_m) || !is_smallint_or_atom(p1))
+			return throw_error(q, p1, p1_ctx, "type_error", "atom");
+
+		m = find_module(q->pl, C_STR(q, p1_m));
+
+		if (!m)
+			return throw_error(q, p1_m, p1_ctx, "existence_error", "module");
+	} else
+		m = q->pl->global_bb ? q->pl->user_m : q->st.m;
+
+	if (!bb_make_key(q, tmpbuf1, sizeof(tmpbuf1), m->name, p1, true)
+		|| !bb_make_key(q, tmpbuf2, sizeof(tmpbuf2), m->name, p1, false))
+		return throw_error(q, p1, p1_ctx, "representation_error", "bb_key");
+
+	char *key2 = TPL_strdup(tmpbuf2);
+	CHECKED(key2);
+	cell *val;
+	prolog_lock(q->pl);
+
+	if (!sl_get(m->keyval, tmpbuf1, (void*)&val) && !sl_get(m->keyval, tmpbuf2, (void*)&val)) {
+		prolog_unlock(q->pl);
+		TPL_free(key2);
+		return false;
+	}
+
+	bool live = val->flags & FLAG_LIVE;
+	cell *tmp = live ?
+		bb_import_term_to_heap(q, val, q->st.cur_ctx) :
+		import_term(q, val, q->st.cur_ctx);
+
+	if (tmp && !live && is_compound(tmp) && (get_arity(tmp) == 1))
+		tmp = bb_reattach_attv(q, tmp);
+
+	CHECKED(tmp, prolog_unlock(q->pl); TPL_free(key2));
+
+	// The import can move the heap, so fetch the args again.
+
+	GET_FIRST_ARG(p1x,nonvar);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,any);
+
+	if (!unify(q, p2, p2_ctx, tmp, q->st.cur_ctx)) {
+		prolog_unlock(q->pl);
+		TPL_free(key2);
+		return false;
+	}
+
+	cell *newval = bb_make_value(q, p3, p3_ctx);
+	CHECKED(newval, prolog_unlock(q->pl); TPL_free(key2));
+
+	while (sl_del(m->keyval, tmpbuf1))
+		;
+
+	while (sl_del(m->keyval, tmpbuf2))
+		;
+
+	sl_app(m->keyval, key2, newval);
+	prolog_unlock(q->pl);
+	return true;
+}
+
 static bool bif_sys_bb_is_live_1(query *q)
 {
 	GET_FIRST_ARG(p1,nonvar);
@@ -611,12 +704,215 @@ static bool bif_sys_bb_is_live_1(query *q)
 	return live;
 }
 
+// Global variables, SWI's b_setval/2 and nb_setval/2, are per thread, so
+// unlike the blackboard they need no lock. A key holds a stack: nb_setval
+// replaces it with one entry, b_setval pushes one that backtracking pops,
+// but only while it is still on top, which its id tells.
+
+typedef struct {
+	uint64_t id;
+	cell *val;
+} gvar;
+
+static void gvar_free(const void *key, const void *val, const void *p)
+{
+	gvar *g = (gvar*)val;
+	TPL_free((void*)key);
+	unshare_cells(g->val, g->val->num_cells);
+	TPL_free(g->val);
+	TPL_free(g);
+}
+
+void gvars_destroy(void *tp)
+{
+	thread *t = tp;
+	sl_destroy(t->gvars);
+	t->gvars = NULL;
+}
+
+void gvar_undo(void *tp, const char *key, uint64_t id)
+{
+	thread *t = tp;
+	gvar *g;
+
+	if (t->gvars && sl_get(t->gvars, key, (void*)&g) && (g->id == id))
+		sl_del(t->gvars, key);
+}
+
+static bool gvar_key(query *q, cell *p1, pl_ctx p1_ctx)
+{
+	if (is_var(p1))
+		return throw_error(q, p1, p1_ctx, "instantiation_error", "atom");
+
+	if (!is_atom(p1))
+		return throw_error(q, p1, p1_ctx, "type_error", "atom");
+
+	return true;
+}
+
+// '$gvar_put'(+Key, +'$bb'(Value), +Backtrackable)
+
+static bool bif_sys_gvar_put_3(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_ARG(p3,atom);
+
+	if (!gvar_key(q, p1, p1_ctx))
+		return false;
+
+	thread *t = get_self_query(q);
+	bool backtrackable = !CMP_STRING_TO_CSTR(q, p3, "true");
+
+	if (!t->gvars)
+		CHECKED(t->gvars = sl_create((void*)fake_strcmp, (void*)gvar_free, NULL));
+
+	cell *val;
+
+	if (backtrackable) {
+		// As bb_b_put/2 stores it: sharing the term's variables, like SWI.
+
+		CHECKED(init_tmp_heap(q));
+		cell *tmp = clone_term_to_tmp(q, p2, p2_ctx);
+		CHECKED(tmp);
+		pl_idx num_cells = tmp->num_cells;
+		CHECKED(val = TPL_malloc(sizeof(cell)*num_cells));
+		dup_cells(val, tmp, num_cells);
+
+		if (!unslice_cells(val, num_cells)) {
+			unshare_cells(val, num_cells);
+			TPL_free(val);
+			return throw_error(q, tmp, q->st.cur_ctx, "resource_error", "memory");
+		}
+
+		val->flags |= FLAG_LIVE;
+	} else
+		CHECKED(val = bb_make_value(q, p2, p2_ctx));
+
+	gvar *g = TPL_malloc(sizeof(gvar));
+	char *key = TPL_strdup(C_STR(q, p1));
+
+	if (!g || !key) {
+		TPL_free(g);
+		TPL_free(key);
+		unshare_cells(val, val->num_cells);
+		TPL_free(val);
+		return throw_error(q, p1, p1_ctx, "resource_error", "memory");
+	}
+
+	g->id = ++t->gvar_seq;
+	g->val = val;
+
+	if (backtrackable) {
+		if (!undo_gvar_on_backtrack(q, t, key, g->id)) {
+			gvar_free(key, g, NULL);
+			return throw_error(q, p1, p1_ctx, "resource_error", "memory");
+		}
+
+		sl_set(t->gvars, key, g);			// on top of what it shadows
+	} else {
+		while (sl_del(t->gvars, key))
+			;
+
+		sl_app(t->gvars, key, g);
+	}
+
+	return true;
+}
+
+// '$gvar_get'(+Key, ?'$bb'(Value))
+
+static bool bif_sys_gvar_get_2(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+
+	if (!gvar_key(q, p1, p1_ctx))
+		return false;
+
+	thread *t = get_self_query(q);
+	gvar *g;
+
+	if (!t->gvars || !sl_get(t->gvars, C_STR(q, p1), (void*)&g))
+		return throw_error(q, p1, p1_ctx, "existence_error", "variable");
+
+	bool live = g->val->flags & FLAG_LIVE;
+	cell *tmp = live ?
+		bb_import_term_to_heap(q, g->val, q->st.cur_ctx) :
+		import_term(q, g->val, q->st.cur_ctx);
+	CHECKED(tmp);
+
+	if (!live && is_compound(tmp) && (get_arity(tmp) == 1)) {
+		tmp = bb_reattach_attv(q, tmp);
+		CHECKED(tmp);
+	}
+
+	GET_FIRST_ARG(p1x,any);
+	GET_NEXT_ARG(p2,any);
+	return unify(q, p2, p2_ctx, tmp, q->st.cur_ctx);
+}
+
+// '$gvar_del'(+Key), nb_delete/1: drops whatever the key has stacked.
+
+static bool bif_sys_gvar_del_1(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+
+	if (!gvar_key(q, p1, p1_ctx))
+		return false;
+
+	thread *t = get_self_query(q);
+
+	if (t->gvars) {
+		while (sl_del(t->gvars, C_STR(q, p1)))
+			;
+	}
+
+	return true;
+}
+
+// '$gvar_keys'(-List): each key the calling thread has set, once.
+
+static bool bif_sys_gvar_keys_1(query *q)
+{
+	GET_FIRST_ARG(p1,var);
+	thread *t = get_self_query(q);
+	CHECKED(init_tmp_heap(q));
+
+	if (t->gvars) {
+		sliter *iter = sl_first(t->gvars);
+		const char *prev = NULL;
+
+		while (sl_next(iter, NULL)) {
+			const char *key = sl_key(iter);
+
+			if (prev && !strcmp(prev, key))
+				continue;
+
+			prev = key;
+			cell tmp;
+			make_atom(&tmp, new_atom(q->pl, key));
+			append_list(q, &tmp);
+		}
+
+		sl_done(iter);
+	}
+
+	cell *l = end_list(q);
+	CHECKED(l);
+	return unify(q, p1, p1_ctx, l, q->st.cur_ctx);
+}
+
 builtins g_bboard_bifs[] =
 {
 	{"$bb_b_put", 2, bif_bb_b_put_2, ":atom,+term", false, false, BLAH},
 	{"$bb_put", 2, bif_bb_put_2, ":atom,+term", false, false, BLAH},
 	{"$bb_get", 2, bif_bb_get_2, ":atom,?term", false, false, BLAH},
 	{"$bb_delete", 2, bif_bb_delete_2, ":atom,?term", false, false, BLAH},
+	{"$bb_update", 3, bif_sys_bb_update_3, ":atom,?term,+term", false, false, BLAH},
+	{"$gvar_put", 3, bif_sys_gvar_put_3, "+atom,+term,+atom", false, false, BLAH},
+	{"$gvar_get", 2, bif_sys_gvar_get_2, "+atom,?term", false, false, BLAH},
+	{"$gvar_del", 1, bif_sys_gvar_del_1, "+atom", false, false, BLAH},
+	{"$gvar_keys", 1, bif_sys_gvar_keys_1, "-list", false, false, BLAH},
 	{"$bb_is_live", 1, bif_sys_bb_is_live_1, ":atom", false, false, BLAH},
 
 	{0}

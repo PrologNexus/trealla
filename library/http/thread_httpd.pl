@@ -1,4 +1,4 @@
-:- module(thread_httpd, [http_server/2, http_stop_server/2]).
+:- module(thread_httpd, [http_server/2, http_stop_server/2, http_switch_protocol/2]).
 
 /** HTTP server, after SWI-Prolog's library(http/thread_httpd).
 
@@ -26,12 +26,27 @@ it a 302. Goal may instead throw http_reply(Reply), Reply one of
 not_found(Path), forbidden(Path), moved(URL), moved_temporary(URL),
 see_other(URL), bad_request(Why), method_not_allowed(Method, Path) or
 server_error(Why). Anything else thrown, or Goal failing, is a 500.
+
+http_switch_protocol(:Goal, +Options), as in SWI-Prolog, hands the
+connection over: the server replies 101 Switching Protocols, with any
+headers([Name(Value), ...]) given, and calls call(Goal, In, Out) on the
+raw connection, to go on in another protocol such as WebSocket. In and
+Out are the one socket stream here, so close it once. If Goal succeeds
+the connection is its own, to close when done or to pass to a thread;
+if it fails or throws, the server closes it. Goal runs in the server's
+own loop, which serves one request at a time, so a long-lived protocol
+should run in a thread Goal creates.
 */
 
 :- use_module(library(lists)).
 :- use_module(library(sockets)).
 
 :- meta_predicate(http_server(1, +)).
+:- meta_predicate(http_switch_protocol(2, +)).
+
+http_switch_protocol(Goal, Options) :-
+	must_be(list, Options),
+	throw(http_reply(switching_protocols(Goal, Options))).
 
 :- dynamic('$http_stop'/1).
 
@@ -65,20 +80,40 @@ accept_loop(S, Goal, Scheme, Port) :-
 		accept_loop(S, Goal, Scheme, Port)
 	).
 
+% A connection handed over by http_switch_protocol/2 is the goal's to
+% close; every other one is closed here.
+
 serve(C, Peer, Goal, Scheme, Port) :-
-	catch(serve_(C, Peer, Goal, Scheme, Port), E, report(E)),
-	catch(close(C), _, true).
+	catch(serve_(C, Peer, Goal, Scheme, Port, Kept), E, (report(E), Kept = false)),
+	(	Kept == true -> true ; catch(close(C), _, true) ).
 
 report(E) :-
 	format(user_error, "% http_server: ~q~n", [E]).
 
-serve_(C, Peer, Goal, Scheme, Port) :-
+serve_(C, Peer, Goal, Scheme, Port, Kept) :-
 	(	read_request(C, Peer, Scheme, Port, Request) ->
 		memberchk(method(Method), Request),
 		run_goal(Goal, Request, Reply),
-		send_reply(C, Method, Reply)
-	;	send_reply(C, get, reply(400, [], "Bad Request\n"))
+		(	Reply = switch(SwitchGoal, Options) ->
+			switch_protocol(C, SwitchGoal, Options, Kept)
+		;	send_reply(C, Method, Reply), Kept = false
+		)
+	;	send_reply(C, get, reply(400, [], "Bad Request\n")), Kept = false
 	).
+
+% 101 and its headers only: no Content-Length and no Connection: close,
+% then the connection is Goal's.
+
+switch_protocol(C, Goal, Options, Kept) :-
+	(	memberchk(headers(Headers), Options) -> true
+	;	memberchk(header(Headers), Options) -> true
+	;	Headers = []
+	),
+	format(C, "HTTP/1.1 101 Switching Protocols\r\n", []),
+	forall((member(H, Headers), H =.. [Name, Value]), send_field(C, Name, Value)),
+	format(C, "\r\n", []),
+	flush_output(C),
+	(	catch(call(Goal, C, C), E, (report(E), fail)) -> Kept = true ; Kept = false ).
 
 % The request...
 
@@ -211,6 +246,8 @@ run_goal(Goal, Request, Reply) :-
 		error_reply(E, Reply)
 	).
 
+error_reply(http_reply(switching_protocols(Goal, Options)), switch(Goal, Options)) :-
+	!.
 error_reply(http_reply(R), Reply) :-
 	http_reply(R, Reply),
 	!.

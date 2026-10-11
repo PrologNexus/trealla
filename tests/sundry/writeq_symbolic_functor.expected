@@ -1,0 +1,12 @@
+a: >>(b,c,d)
+a= >>(b,c,d)
+a: >>(b)
+a= \+(b,c)
+a:[1,2]
+a:{x}
+a=f(x)
+a:'.'(b)
+a:b:c
+error(x,user: >>(a,b,c))
+m1:foo
+user:bar

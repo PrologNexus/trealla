@@ -1,0 +1,6 @@
+t_spin: delivered
+t_no_skip: true/100000
+t_sleep: exception(stop)
+t_cancel: hook_ran
+t_cancel_joined: exited(cancelled)
+t_exit_in_catch: exited(x)

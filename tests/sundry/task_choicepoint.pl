@@ -4,7 +4,7 @@
 :- initialization(main).
 
 main :-
-	call_task((member(X, [a,b]), writeln(X))),
-	call_task((member(Y, [1,2]), sleep(0.01), writeln(Y))),
-	wait,
+	task_call((member(X, [a,b]), writeln(X))),
+	task_call((member(Y, [1,2]), sleep(0.01), writeln(Y))),
+	task_wait,
 	writeln(waited).

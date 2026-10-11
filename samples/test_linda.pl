@@ -7,7 +7,7 @@ main :-
     linda_eval(consumer('C1')),
     linda_eval(consumer('C2')),
     linda_eval(producer('P')),
-    wait,
+    task_wait,
     in(producer(V0)),		% verify it finished normally
     writeq(done(V0)), nl,
     halt.
@@ -21,7 +21,7 @@ producer(_) :-
 		fail.
 producer(_) :-
 	forall(rd({msg:_}), sleep(0.001)),
-	end_wait.
+	task_end_wait.
 
 consumer(N) :-
 	in({msg:I}),

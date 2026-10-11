@@ -26,6 +26,9 @@ Options are those of SWI-Prolog, less proxies and keep-alive:
   * redirect(+Bool), max_redirect(+Max): redirects are followed, ten at
     most, unless redirect(false).
   * timeout(+Seconds): on the connection's reads.
+  * cacert_file(+File): trust the CAs in File for https instead of the
+    system store. cert_verify_hook(cert_accept_any) skips verifying the
+    server's certificate and name, which is otherwise always done.
 
 A reply that is not 2xx throws existence_error(url, URL), or
 permission_error(url, URL) for 401, 403, 405 and 407, with context
@@ -223,9 +226,13 @@ method_option(method(_)).
 
 connect(url(Scheme, Host, Port, _), S, Options) :-
 	atom_chars(HostA, Host),
-	(Scheme == https -> SockOpts = [ssl(true)] ; SockOpts = []),
+	(Scheme == https -> tls_options(Options, TLSOpts), SockOpts = [ssl(true)|TLSOpts] ; SockOpts = []),
 	socket_client_open(HostA:Port, S, SockOpts),
 	(memberchk(timeout(T), Options), T \== infinite -> set_stream(S, timeout(T)) ; true).
+
+tls_options(Options, TLSOpts) :-
+	(memberchk(cert_verify_hook(cert_accept_any), Options) -> TLSOpts = [verify(false)|T] ; TLSOpts = T),
+	(memberchk(cacert_file(F), Options) -> T = [cacert(F)] ; T = []).
 
 send_request(S, Method, Parts, Options) :-
 	Parts = url(Scheme, Host, Port, Path),

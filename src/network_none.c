@@ -96,9 +96,10 @@ int tpl_accept(stream *str, char **addr, int *port)
 
 void tpl_set_nonblocking(stream *str) { (void)str; }
 
-void *tpl_enable_ssl(int fd, const char *hostname, bool is_server, int level, const char *certfile)
+void *tpl_enable_ssl(int fd, const char *hostname, bool is_server, bool verify, const char *cafile, const char **reason)
 {
-	(void)fd; (void)hostname; (void)is_server; (void)level; (void)certfile;
+	(void)fd; (void)hostname; (void)is_server; (void)verify; (void)cafile;
+	*reason = "unavailable";
 	errno = ENOSYS;
 	return NULL;
 }
@@ -256,6 +257,13 @@ bool tpl_host_address(const char *hostname, char *ip, size_t iplen)
 	(void)hostname; (void)ip; (void)iplen;
 	errno = ENOSYS;
 	return false;
+}
+
+unsigned tpl_host_addresses(const char *hostname, char ips[][64], unsigned max)
+{
+	(void)hostname; (void)ips; (void)max;
+	errno = ENOSYS;
+	return 0;
 }
 
 int get_local_port(int fd) { (void)fd; return unavailable(); }

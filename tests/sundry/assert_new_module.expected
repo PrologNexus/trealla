@@ -1,0 +1,5 @@
+t_fact: 1
+t_rule: 2
+t_head: 3
+t_asserta: [0,4]
+t_exists: yes

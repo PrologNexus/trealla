@@ -516,6 +516,7 @@ struct predicate_ {
 	bool is_builtin:1;
 	bool is_public:1;
 	bool is_dynamic:1;
+	bool is_thread_local:1;					// thread_local/1: each thread's clauses are in its own shadow
 	bool is_meta_predicate:1;
 	bool is_multifile:1;
 	bool is_discontiguous:1;
@@ -592,6 +593,7 @@ typedef struct {
 	const char *name;
 	unsigned specifier;
 	unsigned priority;
+	bool exported;						// in its module's export list, so seen by importers
 } op_table;
 
 // Where *ctx* is the context of the var
@@ -688,8 +690,11 @@ typedef struct {
 	};
 
 	size_t mmap_len;
+	void *tptr;
+	uint64_t gvar_id;
 
 	bool is_bboard:1;
+	bool is_gvar:1;							// key, with tptr and gvar_id below
 	bool is_cells:1;
 	bool is_rule:1;
 	bool is_mmap:1;
@@ -778,6 +783,7 @@ struct stream_ {
 	int ungetch, srclen, chan, idx, port;
 	unsigned rows, cols;
 	uint8_t level, eof_action;
+	pl_atomic bool is_closing;			// set before a socket's shutdown, for an accept it wakes
 	bool is_active:1;
 	bool at_end_of_file:1;
 	bool bom:1;
@@ -873,7 +879,7 @@ struct thread_ {
 	// it.
 
 	// Atomic because sched_get() reads it without a lock on the fast
-	// path: a thread other than the owner reaches it through send/2.
+	// path: a thread other than the owner reaches it through task_send/2.
 
 	scheduler *pl_atomic sched;
 
@@ -904,6 +910,11 @@ struct thread_ {
 	unsigned num_vars, at_exit_goal_num_vars, num_locks;
 	int chan, locked_by;
 	pl_atomic bool is_active;
+	bool is_joining;						// under guard: a join is waiting, so it can't be detached
+	skiplist *gvars;						// b_setval/nb_setval, this thread's own
+	uint64_t gvar_seq;
+	predicate **tl_shadows;					// this thread's shadows of thread_local/1 predicates
+	unsigned tl_shadows_n, tl_shadows_cap;
 	volatile int timedout;   // set by SIGALRM handler s_sigfn(); thread-lived
 	bool is_init:1;
 	bool is_finished:1;
@@ -1050,6 +1061,10 @@ struct query_ {
 	pl_ctx dump_var_cell_ctx;
 
 	uint64_t total_goals, total_backtracks, total_retries, total_matches, total_inferences;
+	uint64_t inference_limit;				// call_with_inference_limit/3's, against total_goals; 0 for none
+	uint64_t stack_limit;					// thread_create/3's stack_limit(Bytes); 0 for none
+	bool stack_over;						// set when growth went past stack_limit, for the engine to throw
+	bool goal_trap;							// either of the two above armed: one test per goal while neither is
 	uint64_t total_tcos, total_recovs, total_matched, total_no_recovs;
 	pl_idx hw_frames, hw_choices, hw_trails, hw_slots, hw_heap;	// highwater marks, for statistics
 	uint64_t step, qid, tmo_msecs, chgen, cycle_error;
@@ -1066,11 +1081,11 @@ struct query_ {
 	unsigned varno, tab0_varno, cur_engine, cur_chan, my_chan;
 
 	// A task's own mailbox: list of task_msg nodes (bif_tasks.c),
-	// scanned in place by recv/1 so a skipped message keeps its
+	// scanned in place by task_recv/1 so a skipped message keeps its
 	// position rather than rotating to the back. Guarded by the
-	// owning thread's scheduler->guard, since send/2 can enqueue into
+	// owning thread's scheduler->guard, since task_send/2 can enqueue into
 	// this from any thread. cur_task_qid is the sender of the last
-	// message recv/1 matched - stored for a reply-to, not yet exposed
+	// message task_recv/1 matched - stored for a reply-to, not yet exposed
 	// to Prolog. Separate from cur_chan (a thread chan, unsigned):
 	// qid is process-wide and uint64_t, would truncate if shared.
 
@@ -1143,7 +1158,6 @@ struct query_ {
 	bool did_quote:1;
 	bool is_input:1;
 	bool is_engine:1;
-	bool ops_dirty:1;
 	bool noderef:1;
 	bool double_quotes:1;
 	bool end_wait:1;
@@ -1245,6 +1259,7 @@ struct module_ {
 	module **used;
 	unsigned used_alloc;
 	module *orig;
+	module *dead_next;					// on pl->dead_modules once destroy_module/1 has emptied it
 	prolog *pl;
 	lock guard;							// serializes this module's own predicate mutation; see prolog_lock_mod()
 	pi *gex_head, *gex_tail;			// goal expansion ??? (see pi_ above, why not use list?)
@@ -1268,6 +1283,7 @@ struct module_ {
 	bool quad_recorded:1;				// at least one answer description seen for quad_query
 	bool user_ops:1;
 	bool prebuilt:1;
+	bool from_file:1;					// made by a module/2 directive
 	bool make_public:1;
 	bool loaded_properties:1;
 	bool loading:1;
@@ -1290,8 +1306,10 @@ struct prolog_ {
 	unsigned modmap_alloc;
 	list modules;
 	module *system_m, *user_m, *m, *dcgs;
+	module *dead_modules;				// emptied by destroy_module/1, kept for stale pointers, freed at exit
 	parser *p;
 	skiplist *biftab, *help, *fortab, *alias;
+	skiplist *flagtab;					// flag/3 values, keyed by flag_key()
 	uint8_t op_names[OP_NAMES_BYTES];	// see note_op_name()
 	lock guard;
 	uint64_t s_last, s_cnt, seed, thr_cnt;
@@ -1449,7 +1467,7 @@ inline static pl_idx dup_cells_by_ref(cell *dst, const cell *src, pl_ctx src_ctx
 cell *list_head(cell *l, cell *tmp);
 cell *list_tail(cell *l, cell *tmp);
 
-enum clause_type { DO_CLAUSE, DO_RETRACT, DO_RETRACTALL };
+enum clause_type { DO_CLAUSE, DO_CLAUSE_STATIC, DO_RETRACT, DO_RETRACTALL };
 
 char *formatted(const char *src, int srclen, bool dq, bool json);
 char *slicedup(const char *s, size_t n);

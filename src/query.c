@@ -313,6 +313,24 @@ static void free_slot_pages(slot_page *a)
 	}
 }
 
+// What the query has in use, against a thread's stack_limit(Bytes). It is
+// worked out only when an area takes a new page, which is rare, and the
+// engine throws on its next goal, where a throw is safe.
+
+void check_stack_limit(query *q)
+{
+	if (!q->stack_limit)
+		return;
+
+	size_t slots = q->st.sp_page ? q->st.sp_page->base + (size_t)(q->st.sp - q->st.sp_page->slots) : 0;
+	size_t cells = q->heap_pages ? q->heap_pages->base + q->st.hp : 0;
+	size_t used = (size_t)q->st.fp * sizeof(frame) + (size_t)q->st.cp * sizeof(choice)
+		+ (size_t)q->st.tp * sizeof(trail) + slots * sizeof(slot) + cells * sizeof(cell);
+
+	if (used > q->stack_limit)
+		q->stack_over = q->goal_trap = true;
+}
+
 void check_pressure(query *q)
 {
 #if REDUCE_PRESSURE
@@ -372,6 +390,7 @@ static bool check_choice(query *q)
 
 	q->choice_current = a;
 	q->choice_next = a->entries;
+	check_stack_limit(q);
 	return true;
 }
 
@@ -405,6 +424,7 @@ bool check_frame(query *q, unsigned max_vars)
 			frames[i].slots = frames[i].ovf = q->slot_pages->slots;
 
 		q->frame_pages[page_idx] = frames;
+		check_stack_limit(q);
 	}
 
 	frame *f = GET_NEW_FRAME();
@@ -444,6 +464,7 @@ static bool next_slot_page(query *q, unsigned cnt)
 	b->base = a->base + a->used;
 	q->st.sp_page = b;
 	q->st.sp = b->slots;
+	check_stack_limit(q);
 	return true;
 }
 
@@ -576,6 +597,7 @@ bool check_trail(query *q)
 
 	q->trail_current = a;
 	q->trail_next = a->entries;
+	check_stack_limit(q);
 	return true;
 }
 
@@ -625,13 +647,41 @@ bool undo_on_backtrack(query *q, void *v, enum undo_item type)
 	if (!u) return false;
 	u->c = v;
 
-	if (type == UNDO_BBOARD)
-		u->is_bboard = true;
-	else if (type == UNDO_RULE)
+	if (type == UNDO_RULE)
 		u ->is_rule = true;
 	else
 		u->is_cells = true;
 
+	return true;
+}
+
+// A b_setval/2 entry to take back off thread t's variables, if still on top.
+
+bool undo_gvar_on_backtrack(query *q, void *t, const char *key, uint64_t id)
+{
+	char *k = TPL_strdup(key);
+	if (!k) return false;
+	undo_item *u = push_undo_item(q);
+	if (!u) { TPL_free(k); return false; }
+	u->tptr = t;
+	u->key = k;
+	u->gvar_id = id;
+	u->is_gvar = true;
+	return true;
+}
+
+// A bb_b_put/2 entry to take back off m's blackboard. The key is the
+// undo's own copy: a bb_put/2 meanwhile frees the one the entry holds.
+
+bool undo_bb_on_backtrack(query *q, module *m, const char *key)
+{
+	char *k = TPL_strdup(key);
+	if (!k) return false;
+	undo_item *u = push_undo_item(q);
+	if (!u) { TPL_free(k); return false; }
+	u->m = m;
+	u->key = k;
+	u->is_bboard = true;
 	return true;
 }
 
@@ -675,6 +725,79 @@ void make_call_redo(query *q, cell *tmp)
 	tmp->ret_instr = q->st.instr;		// save the return instruction
 	tmp->chgen = f->chgen;				// ... choice-generation
 	tmp->mid = q->st.m->id;				// ... current-module
+}
+
+// A control-construct goal is run as its body: the control structure as
+// the clone made to check it has it, every variable in it dereferenced at
+// the time of the call (ISO 7.6.2), so a cut nested behind one still cuts,
+// but each leaf goal by reference from the original, so the terms its
+// arguments are bound to stay the caller's, for nb_setarg/3. The walk
+// follows the clone, which is finite even where the goal is cyclic.
+
+static bool is_control_pair(const cell *c)
+{
+	return is_interned(c) && (get_arity(c) == 2)
+		&& ((c->val_off == g_conjunction_s) || (c->val_off == g_disjunction_s)
+			|| (c->val_off == g_if_then_s) || (c->val_off == g_soft_cut_s));
+}
+
+// A term built as data, by unifying a clause head (A;B) say, carries no
+// builtin: run as it is, a ,/2 there was a call, and the cut inside it
+// cut only that call. Give it the builtin, as call_check() does on top.
+
+static void resolve_control(query *q, cell *c)
+{
+	if (is_builtin(c) && c->bif_ptr)
+		return;
+
+	bool found = false;
+	builtins *bif = get_builtin_term(q->st.m, c, &found, NULL);
+
+	if (found && bif) {
+		c->bif_ptr = bif;
+		c->flags |= FLAG_INTERNED_BUILTIN;
+	}
+}
+
+static pl_idx body_cells(query *q, cell *cl, cell *o, pl_ctx o_ctx, cell *dst)
+{
+	o = deref(q, o, o_ctx);
+	o_ctx = q->latest_ctx;
+
+	if (is_control_pair(cl) && is_control_pair(o) && (o->val_off == cl->val_off)) {
+		cell *cl1 = cl + 1, *cl2 = cl1 + cl1->num_cells;
+		cell *o1 = o + 1, *o2 = o1 + o1->num_cells;
+		pl_idx n = 1;
+		n += body_cells(q, cl1, o1, o_ctx, dst ? dst + n : NULL);
+		n += body_cells(q, cl2, o2, o_ctx, dst ? dst + n : NULL);
+
+		if (dst) {
+			copy_cells(dst, cl, 1);
+			dst->num_cells = n;
+			resolve_control(q, dst);
+		}
+
+		return n;
+	}
+
+	if (dst) {
+		dup_cells_by_ref(dst, o, o_ctx, o->num_cells);
+
+		if (is_interned(dst) && !get_arity(dst) && (dst->val_off == g_cut_s))
+			resolve_control(q, dst);
+	}
+
+	return o->num_cells;
+}
+
+cell *prepare_call_body(query *q, bool noskip, cell *clone, cell *p1, pl_ctx p1_ctx, unsigned extras)
+{
+	pl_idx n = body_cells(q, clone, p1, p1_ctx, NULL);
+	cell *tmp = alloc_heap(q, n + extras);
+	if (!tmp) return NULL;
+	q->noskip = noskip;
+	body_cells(q, clone, p1, p1_ctx, tmp);
+	return tmp;
 }
 
 cell *prepare_call(query *q, bool noskip, cell *p1, pl_ctx p1_ctx, unsigned extras)
@@ -1732,9 +1855,15 @@ static void undo_list_drain(list *l)
 	undo_item *u;
 
 	while ((u = list_pop_back(l)) != NULL) {
-		if (u->is_bboard)
+		if (u->is_gvar) {
+			gvar_undo(u->tptr, u->key, u->gvar_id);
+			TPL_free(u->key);
+		} else if (u->is_bboard) {
+			prolog_lock(u->m->pl);
 			sl_del(u->m->keyval, u->key);
-		else if (u->is_mmap)
+			prolog_unlock(u->m->pl);
+			TPL_free(u->key);
+		} else if (u->is_mmap)
 			stream_unmap(u->addr, u->mmap_len);
 		else if (u->is_rule) {
 			clear_clause(&u->r->cl);
@@ -2244,6 +2373,21 @@ bool has_next_key(query *q)
 	return false;
 }
 
+// A closure (1..9) always gets the caller's module. A goal (0, or ^ for one
+// with V^ in front) needs it only from outside user: an unresolved call falls
+// back to user anyway, and goals written at user level stay as written.
+
+static bool meta_arg_wants_module(const query *q, const cell *m)
+{
+	if (is_smallint(m) && (get_smallint(m) > 0) && (get_smallint(m) <= 9))
+		return true;
+
+	bool is_goal = (is_smallint(m) && (get_smallint(m) == 0))
+		|| (is_interned(m) && (m->val_off == g_caret_s));
+
+	return is_goal && (q->st.m != q->pl->user_m);
+}
+
 static bool expand_meta_predicate(query *q, predicate *pr)
 {
 	uint32_t arity = get_arity(q->st.key);
@@ -2256,18 +2400,17 @@ static bool expand_meta_predicate(query *q, predicate *pr)
 
 	for (cell *k = q->st.key+1, *m = pr->meta_args+1; arity--; k += k->num_cells, m += m->num_cells) {
 		cell *k0 = deref(q, k, q->st.key_ctx);
+		pl_ctx k0_ctx = q->latest_ctx;
 
-		if ((get_arity(k0) == 2) && (k0->val_off == g_colon_s) && is_atom(FIRST_ARG(k0)))
+		if ((get_arity(k0) == 2) && (k0->val_off == g_colon_s) && is_atom(deref(q, FIRST_ARG(k0), k0_ctx)))
 			;
 		else if (!is_interned(k0) || is_iso_list(k0))
-			;
-		else if (is_interned(k0) && ((k0->val_off == g_call_s) || (k0->val_off == g_once_s) || (k0->val_off == g_ignore_s)))
 			;
 		else if (is_interned(m) && (m->val_off == g_colon_s)) {
 			make_instr(tmp, g_colon_s, bif_iso_qualify_2, 2, 1+k->num_cells);
 			SET_OP(tmp, OP_XFY); tmp++;
 			make_atom(tmp++, new_atom(q->pl, q->st.m->name));
-		} else if (is_smallint(m) && is_positive(m) && (get_smallint(m) <= 9)) {
+		} else if (meta_arg_wants_module(q, m)) {
 			make_instr(tmp, g_colon_s, bif_iso_qualify_2, 2, 1+k->num_cells);
 			SET_OP(tmp, OP_XFY); tmp++;
 			make_atom(tmp++, new_atom(q->pl, q->st.m->name));
@@ -2700,34 +2843,53 @@ static bool find_key(query *q, predicate *pr, cell *key, pl_ctx key_ctx)
 	return true;
 }
 
+// The predicate clause/retract act on. An explicit module, from M:Head,
+// is looked up every time: M may be bound at run time, so the head cell's
+// cached match could belong to another module.
+
+static predicate *find_db_predicate(query *q, module *m, cell *c)
+{
+	predicate *pr = NULL;
+
+	if (m) {
+		if (is_cstring(c))
+			convert_to_literal(m, c);
+
+		pr = search_predicate(m, c);
+		return pr ? thread_local_shadow(pr) : NULL;
+	}
+
+	if (is_interned(c))
+		pr = c->match;
+	else if (is_cstring(c))
+		convert_to_literal(q->st.m, c);
+
+	if (pr && pr->is_abolished)
+		pr = search_predicate(q->st.m, c);
+
+	if (!pr || is_evaluable(c) || is_builtin(c)) {
+		pr = search_predicate(q->st.m, c);
+
+		if (pr)
+			c->match = pr;
+	}
+
+	return pr ? thread_local_shadow(pr) : NULL;
+}
+
 // Match HEAD :- BODY.
 
-bool match_rule(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
+bool match_rule(query *q, module *m, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 {
 	if (!q->retry) {
 		cell *c = deref(q, get_head(p1), p1_ctx);
 		pl_ctx c_ctx = q->latest_ctx;
-		predicate *pr = NULL;
-
-		if (is_interned(c))
-			pr = c->match;
-		else if (is_cstring(c))
-			convert_to_literal(q->st.m, c);
-
-		if (pr && pr->is_abolished)
-			pr = search_predicate(q->st.m, c);
-
-		if (!pr || is_evaluable(c) || is_builtin(c)) {
-			pr = search_predicate(q->st.m, c);
-
-			if (pr)
-				c->match = pr;
-		}
+		predicate *pr = find_db_predicate(q, m, c);
 
 		if (!pr) {
 			bool found = false;
 
-			if (get_builtin_term(q->st.m, c, &found, NULL), found)
+			if (get_builtin_term(m ? m : q->st.m, c, &found, NULL), found)
 				return throw_error(q, c, c_ctx, "permission_error", "modify,static_procedure");
 
 			q->st.dbe = NULL;
@@ -2817,33 +2979,18 @@ bool match_rule(query *q, cell *p1, pl_ctx p1_ctx, enum clause_type is_retract)
 // Match HEAD.
 // Match HEAD :- true.
 
-bool match_clause(query *q, cell *p1, pl_ctx p1_ctx, cell **ret_body, enum clause_type is_retract)
+bool match_clause(query *q, module *m, cell *p1, pl_ctx p1_ctx, cell **ret_body, enum clause_type is_retract)
 {
 	if (!q->retry) {
 		cell *c = p1;
 		pl_ctx c_ctx = p1_ctx;
-		predicate *pr = NULL;
-
-		if (is_interned(c))
-			pr = c->match;
-		else if (is_cstring(c))
-			convert_to_literal(q->st.m, c);
-
-		if (pr && pr->is_abolished)
-			pr = search_predicate(q->st.m, c);
-
-		if (!pr || is_evaluable(c) || is_builtin(c)) {
-			pr = search_predicate(q->st.m, c);
-
-			if (pr)
-				c->match = pr;
-		}
+		predicate *pr = find_db_predicate(q, m, c);
 
 		if (!pr) {
 			bool found = false;
 
-			if (get_builtin_term(q->st.m, p1, &found, NULL), found) {
-				if (is_retract != DO_CLAUSE)
+			if (get_builtin_term(m ? m : q->st.m, p1, &found, NULL), found) {
+				if ((is_retract != DO_CLAUSE) && (is_retract != DO_CLAUSE_STATIC))
 					return throw_error(q, p1, p1_ctx, "permission_error", "modify,static_procedure");
 				else
 					return throw_error(q, p1, p1_ctx, "permission_error", "access,private_procedure");
@@ -2858,7 +3005,7 @@ bool match_clause(query *q, cell *p1, pl_ctx p1_ctx, cell **ret_body, enum claus
 			pr = pr->alias;
 		}
 
-		if (!pr->is_dynamic) {
+		if (!pr->is_dynamic && (is_retract != DO_CLAUSE_STATIC)) {
 			if (is_retract == DO_CLAUSE)
 				return throw_error(q, p1, p1_ctx, "permission_error", "access,private_procedure");
 
@@ -2909,7 +3056,7 @@ bool match_clause(query *q, cell *p1, pl_ctx p1_ctx, cell **ret_body, enum claus
 
 		cell *tmp;
 
-		if ((is_retract != DO_CLAUSE) && cl->is_purgeable) {
+		if ((is_retract != DO_CLAUSE) && (is_retract != DO_CLAUSE_STATIC) && cl->is_purgeable) {
 			tmp = c;
 		} else {
 			tmp = import_term(q, c, q->st.cur_ctx);
@@ -2977,6 +3124,9 @@ bool match_head(query *q)
 			c->val_off = pr->alias->key.val_off;
 			pr = pr->alias;
 		}
+
+		if (pr->is_thread_local && !(pr = thread_local_shadow(pr)))
+			return throw_error(q, c, c_ctx, "resource_error", "memory");
 
 		// A predicate that exists in the module but has no clauses and is
 		// neither dynamic nor multifile (e.g. a static predicate left empty
@@ -3168,7 +3318,11 @@ bool start(query *q)
 		}
 
 #if USE_THREADS
-		if (q->thread_ptr) {
+		// Not while a retry is pending: retry_choice() below would restore
+		// the choicepoint over the handler, and the signal, already taken
+		// off the queue, was lost. The next pass delivers it.
+
+		if (q->thread_ptr && !q->retry) {
 			thread *t = q->thread_ptr;
 
 			if (list_count(&t->signals)) {
@@ -3204,6 +3358,38 @@ bool start(query *q)
 		pl_ctx save_ctx = q->st.cur_ctx;
 		q->cycle_error = q->did_throw = false;
 		q->total_goals++;
+
+		// A thread's stack_limit passed, or call_with_inference_limit/3's
+		// limit reached. Each is cleared before its throw, so the handler
+		// runs unlimited; call_with_inference_limit/3 puts back the next
+		// limit out. One test per goal while neither is armed.
+
+		if (q->goal_trap) {
+			const char *ball = NULL;
+
+			if (q->stack_over) {
+				q->stack_over = false;
+				ball = "error(resource_error(stack),stack_limit)";
+			} else if (q->inference_limit && (q->total_goals > q->inference_limit)) {
+				q->inference_limit = 0;
+				ball = "'$inference_limit_exceeded'";
+			}
+
+			q->goal_trap = q->stack_over || q->inference_limit;
+
+			if (ball) {
+				q->did_throw = true;
+				find_exception_handler(q, (char*)ball);
+
+				if (q->abort && !q->error)
+					break;
+
+				if (q->st.instr)
+					proceed(q);
+
+				goto MORE;
+			}
+		}
 
 		if (is_builtin(q->st.instr)) {
 			q->total_inferences++;
@@ -3244,6 +3430,7 @@ bool start(query *q)
 
 			if (!(q->total_goals % YIELD_INTERVAL)) {
 				check_pressure(q);
+				check_stack_limit(q);
 
 				if (q->yield_at && !q->run_hook) {
 					uint64_t now = wall_time_in_usec() / 1000;
@@ -3565,7 +3752,6 @@ static query *query_create_(module *m, bool is_toplevel)
 	q->flags = m->flags;
 	q->get_started = wall_time_in_usec();
 	q->cpu_time = q->time_cpu_last_started = q->st.cpu_time = cpu_time_in_usec();
-	q->ops_dirty = true;
 	q->max_depth = m->pl->def_max_depth;
 	q->vgen = 1;
 	q->dump_var_num = -1;

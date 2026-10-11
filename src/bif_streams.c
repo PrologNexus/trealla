@@ -425,6 +425,7 @@ int new_stream(prolog *pl)
 			continue;
 
 		str->timeout_ms = 0;
+		str->is_closing = false;
 		str->is_pipe = false;
 		str->is_popen = false;
 		str->is_socket = false;
@@ -583,7 +584,7 @@ static bool del_stream_properties(query *q, int n)
 	set_arity(tmp, 2);
 	q->retry = QUERY_OK;
 
-	while (do_retract(q, tmp, q->st.cur_ctx, DO_RETRACTALL)) {
+	while (do_retract(q, NULL, tmp, q->st.cur_ctx, DO_RETRACTALL)) {
 		if (q->did_throw) return false;
 		q->retry = QUERY_RETRY;
 		retry_choice(q);
@@ -836,7 +837,7 @@ static bool bif_iso_stream_property_2(query *q)
 	CHECKED(tmp);
 	tmp->val_off = g_sys_stream_property_s;
 
-	if (match_clause(q, tmp, q->st.cur_ctx, NULL, DO_CLAUSE) != true) {
+	if (match_clause(q, NULL, tmp, q->st.cur_ctx, NULL, DO_CLAUSE) != true) {
 		clear_streams_properties(q);
 
 		if (is_callable(p1) && !strstr(s_properties, C_STR(q, p1)))
@@ -6874,6 +6875,46 @@ static bool bif_sys_capture_output_to_atom_1(query *q)
 	bool ok = unify(q, p1, p1_ctx, &tmp, q->st.cur_ctx);
 	unshare_cell(&tmp);
 	return ok;
+}
+
+// Run portray/1 on a term with current output captured, for format/2's ~p.
+
+char *portray_term_to_strbuf(query *q, cell *c, pl_ctx c_ctx)
+{
+	int n = q->pl->current_output;
+	stream *str = &q->pl->streams[n];
+
+	if (!begin_capture(q, str))
+		return NULL;
+
+	cell p1[1+c->num_cells];
+	make_instr(p1+0, new_atom(q->pl, "$portray"), NULL, 1, c->num_cells);
+	dup_cells_by_ref(p1+1, c, c_ctx, c->num_cells);
+	cell *tmp = prepare_call(q, CALL_SKIP, p1, q->st.cur_ctx, 1);
+	query *q2 = NULL;
+
+	if (tmp) {
+		make_end(tmp+p1->num_cells);
+		q2 = query_create_subquery(q, tmp);
+	}
+
+	if (q2) {
+		start(q2);
+		query_destroy(q2);
+	}
+
+	size_t at = capture_start(str);
+	size_t len = SB_strlen(str->sb) - at;
+	char *dst = q2 ? TPL_malloc(len+1) : NULL;
+
+	if (dst) {
+		const char *buf = SB_cstr(str->sb);		// a conditional expression, so bind it first
+		memcpy(dst, buf + at, len);
+		dst[len] = '\0';
+	}
+
+	end_capture(str);
+	return dst;
 }
 
 static bool bif_sys_capture_error_0(query *q)

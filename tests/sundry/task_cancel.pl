@@ -27,7 +27,7 @@ looper(N) :-
 	retractall(tick(_)),
 	assertz(tick(N)),
 	N1 is N + 1,
-	yield,
+	task_yield,
 	looper(N1).
 
 % Cancel a running task; it must actually stop (tick/1 stops changing)
@@ -37,12 +37,12 @@ cancel_stops_task :-
 	retractall(tick(_)),
 	assertz(tick(0)),
 	task_create(looper(0), Qid),
-	forall(between(1,20,_), yield),
+	forall(between(1,20,_), task_yield),
 	tick(Before),
 	task_cancel(Qid),
-	wait,
+	task_wait,
 	tick(After),
-	forall(between(1,20,_), yield),
+	forall(between(1,20,_), task_yield),
 	tick(Final),
 	( After =< Before + 1, Final == After -> R = ok ; R = failed ),
 	report(cancel_stops_task, R, ok).
@@ -73,14 +73,14 @@ cancel_non_task_throws :-
 % A cancelled task's own mailbox is drained on teardown, not leaked -
 % send it something it will never get to read, then cancel it.
 
-doomed_waiter :- recv(never_arrives, [timeout(30.0)]).
+doomed_waiter :- task_recv(never_arrives, [timeout(30.0)]).
 
 cancel_with_pending_mail :-
 	task_create(doomed_waiter, Qid),
-	send(Qid, unread(1)),
-	send(Qid, unread(2)),
+	task_send(Qid, unread(1)),
+	task_send(Qid, unread(2)),
 	task_cancel(Qid),
-	wait,
+	task_wait,
 	report(cancel_with_pending_mail, done, done).
 
 main :-
