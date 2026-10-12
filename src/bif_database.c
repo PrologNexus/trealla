@@ -752,7 +752,7 @@ static bool bif_iso_asserta_1(query *q)
 	}
 
 	pl_idx num_cells = tmp->num_cells;
-	parser *p = parser_create_sized(q->st.m, num_cells+1);
+	parser *p = parser_create_sized(q->st.m, num_cells);
 	CHECKED(p);
 
 	p->cl->cidx = dup_cells(p->cl->cells, tmp, num_cells);
@@ -767,6 +767,13 @@ static bool bif_iso_asserta_1(query *q)
 	}
 
 	assign_vars(p, 0, true);
+
+	if (p->error) {
+		const bool too_many = p->vartab.num_vars >= MAX_VARS;
+		parser_destroy(p);
+		return throw_error(q, tmp, q->st.cur_ctx, "resource_error", too_many ? "max_vars" : "memory");
+	}
+
 	term_to_body(p);
 	cell *h = get_head(p->cl->cells);
 
@@ -831,7 +838,7 @@ static bool do_assertz_1(query *q)
 	}
 
 	pl_idx num_cells = tmp->num_cells;
-	parser *p = parser_create_sized(q->st.m, num_cells+1);
+	parser *p = parser_create_sized(q->st.m, num_cells);
 	CHECKED(p);
 
 	p->cl->cidx = dup_cells(p->cl->cells, tmp, num_cells);
@@ -846,6 +853,13 @@ static bool do_assertz_1(query *q)
 	}
 
 	assign_vars(p, 0, true);
+
+	if (p->error) {
+		const bool too_many = p->vartab.num_vars >= MAX_VARS;
+		parser_destroy(p);
+		return throw_error(q, tmp, q->st.cur_ctx, "resource_error", too_many ? "max_vars" : "memory");
+	}
+
 	term_to_body(p);
 	cell *h = get_head(p->cl->cells);
 
@@ -922,7 +936,7 @@ static bool do_asserta_2(query *q)
 	CHECKED(tmp);
 
 	pl_idx num_cells = tmp->num_cells;
-	parser *p = parser_create_sized(q->st.m, num_cells+1);
+	parser *p = parser_create_sized(q->st.m, num_cells);
 	CHECKED(p);
 
 	p->cl->cidx = dup_cells(p->cl->cells, tmp, num_cells);
@@ -937,6 +951,13 @@ static bool do_asserta_2(query *q)
 	}
 
 	assign_vars(p, 0, true);
+
+	if (p->error) {
+		const bool too_many = p->vartab.num_vars >= MAX_VARS;
+		parser_destroy(p);
+		return throw_error(q, tmp, q->st.cur_ctx, "resource_error", too_many ? "max_vars" : "memory");
+	}
+
 	term_to_body(p);
 	cell *h = get_head(p->cl->cells);
 
@@ -1022,7 +1043,7 @@ static bool do_assertz_2(query *q)
 	CHECKED(tmp);
 
 	pl_idx num_cells = tmp->num_cells;
-	parser *p = parser_create_sized(q->st.m, num_cells+1);
+	parser *p = parser_create_sized(q->st.m, num_cells);
 	CHECKED(p);
 
 	p->cl->cidx = dup_cells(p->cl->cells, tmp, num_cells);
@@ -1037,6 +1058,13 @@ static bool do_assertz_2(query *q)
 	}
 
 	assign_vars(p, 0, true);
+
+	if (p->error) {
+		const bool too_many = p->vartab.num_vars >= MAX_VARS;
+		parser_destroy(p);
+		return throw_error(q, tmp, q->st.cur_ctx, "resource_error", too_many ? "max_vars" : "memory");
+	}
+
 	term_to_body(p);
 	cell *h = get_head(p->cl->cells);
 

@@ -420,7 +420,7 @@ parser *parser_create(module *m)
 	return parser_create_sized(m, INITIAL_NBR_CELLS);
 }
 
-// For a clause of known size: assert would otherwise zero the default thousand cells every time.
+// Room for a term of num_cells and the end assign_vars() adds, which make_room() wants a spare cell past.
 
 parser *parser_create_sized(module *m, pl_idx num_cells)
 {
@@ -431,6 +431,7 @@ parser *parser_create_sized(module *m, pl_idx num_cells)
 
 	p->pl = m->pl;
 	p->m = m;
+	num_cells += 2;
 	p->cl = TPL_calloc(1, sizeof(clause)+(sizeof(cell)*num_cells));
 
 	if (!p->cl) {
