@@ -3,9 +3,6 @@
 :- initialization(main).
 :- set_prolog_flag(double_quotes, codes).
 
-name(N, L) :-
-	( number(N) -> number_codes(N, L) ; atom_codes(N, L) ).
-
 /*
 
 Perl Style Regular Expressions in Prolog
