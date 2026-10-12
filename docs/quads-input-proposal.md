@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#4, s#270, s#271.**
+**Stage 3 — the suite. Implemented for s#1..s#50, s#270, s#271.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -160,7 +160,17 @@ Trealla passes all six: the two syntax errors (s#2, s#4), the wait
 (s#3), and the peek-one-character discipline that s#1 and the s#270/
 s#271 pair each test from a different angle - past an end token, and
 past an end token immediately or non-immediately followed by a
-comment. The rest of that page remains to encode.
+comment.
+
+s#5..s#50 are in `tests/issues/test1099b.pl`, run with `strict_iso` on
+since the page describes ISO. Trealla passes all 45 after three fixes
+they turned up: `writeq/1` left an operator atom that cannot be prefix
+unbracketed as an operand, `* = a` for `(*)=a` (s#27); the reader took
+a minus after a postfix operator as prefix, so `1e-9` with `e` a postfix
+operator failed to read (s#50); and `\e` and `\d` were accepted in strict mode
+(s#17, s#19, s#21). A syntax error is described with how far the reader
+got, which the standard leaves open. The rest of that page remains to
+encode.
 
 ## 5. Dependencies
 
@@ -182,16 +192,3 @@ on peeking at the sentinel being repeatable and non-destructive.
 - Whether a `waits` that is *not* reached — the query answered without
   asking for another character — should be reported differently from an
   ordinary mismatch. It is the interesting failure for conformity work.
-- `with_output_to/2` does not nest, so a quad using `outputs/1` cannot
-  be run inside one. `'$capture_output'` toggles `is_memory` and frees
-  the buffer rather than saving and restoring it, so an inner capture
-  cancels the outer one and its output escapes to the real stream:
-
-  ```prolog
-  ?- with_output_to(chars(O), (write(before),
-         with_output_to(chars(I), write(inner)), write(after))).
-     % writes 'innerafter' to stdout, O = [], I = []
-  ```
-
-  Worth its own issue. It bit the test for this work, which captures
-  the report to keep it independent of the path it was invoked with.

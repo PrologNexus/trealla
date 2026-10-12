@@ -135,7 +135,7 @@
 % Stage 3 of #1099: encode notes from UWN's ISO syntax conformity suite
 % (https://www.complang.tuwien.ac.at/ulrich/iso-prolog/conformity_testing)
 % as quads. Row numbers below are that page's own numbering ("s#" in
-% the issue). Trealla passes all six.
+% the issue). Trealla passes all six. s#5..s#50 are in test1099b.pl.
 
 % s#1: a conforming reader must peek the character past the end token
 % to confirm it, not merely recognise the '.'.
