@@ -2898,7 +2898,10 @@ static predicate *find_db_predicate(query *q, module *m, cell *c, bool inherit)
 	else if (is_cstring(c))
 		convert_to_literal(q->st.m, c);
 
-	if (pr && (pr->is_abolished || !match_in_view(q, pr)))
+	if (pr && pr->is_abolished) {
+		if ((pr = search_predicate(q->st.m, c)) != NULL)
+			c->match = pr;
+	} else if (pr && !match_in_view(q, pr))
 		pr = search_predicate(q->st.m, c);
 
 	if (!pr || is_evaluable(c) || is_builtin(c)) {
@@ -3130,7 +3133,12 @@ bool match_head(query *q)
 			convert_to_literal(q->st.m, c);
 		}
 
-		if (pr && (pr->is_abolished || !match_in_view(q, pr)))
+		// One abolished and since redefined is cached afresh, or every call here would search for it.
+
+		if (pr && pr->is_abolished) {
+			if ((pr = search_predicate(q->st.m, c)) != NULL)
+				c->match = pr;
+		} else if (pr && !match_in_view(q, pr))
 			pr = search_predicate(q->st.m, c);
 
 		if (!pr || is_evaluable(c) || is_builtin(c)) {
