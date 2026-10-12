@@ -8,6 +8,7 @@ extern const char *g_escapes;
 extern const char *g_anti_escapes;
 
 parser *parser_create(module *m);
+parser *parser_create_sized(module *m, pl_idx num_cells);
 void parser_destroy(parser *p);
 
 unsigned tokenize(parser *p, bool args, bool consing);

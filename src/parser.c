@@ -417,6 +417,13 @@ void parser_destroy(parser *p)
 
 parser *parser_create(module *m)
 {
+	return parser_create_sized(m, INITIAL_NBR_CELLS);
+}
+
+// For a clause of known size: assert would otherwise zero the default thousand cells every time.
+
+parser *parser_create_sized(module *m, pl_idx num_cells)
+{
 	parser *p = TPL_calloc(1, sizeof(parser));
 
 	if (!p)
@@ -424,7 +431,6 @@ parser *parser_create(module *m)
 
 	p->pl = m->pl;
 	p->m = m;
-	pl_idx num_cells = INITIAL_NBR_CELLS;
 	p->cl = TPL_calloc(1, sizeof(clause)+(sizeof(cell)*num_cells));
 
 	if (!p->cl) {
