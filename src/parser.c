@@ -2619,6 +2619,11 @@ void assign_vars(parser *p, unsigned start, bool rebase)
 		c->flags &= ~FLAG_VAR_REF;
 
 		if (was_ref) {
+			// It may carry an anonymous mark from functor/3 and the like, which only holds while it occurs once.
+
+			if (!rebase || (c->var_num >= p->vartab.alloc) || (p->vartab.v[c->var_num].used != 1))
+				c->flags &= ~(FLAG_VAR_ANON | FLAG_VAR_VOID);
+
 			c->flags |= FLAG_VAR_GLOBAL;
 			continue;
 		}

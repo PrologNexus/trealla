@@ -816,7 +816,7 @@ static void print_variable(query *q, cell *c, pl_ctx c_ctx, bool running)
 			emit(q, get_slot_name(q, slot_nbr, q->listing||q->portray_vars, tmpbuf));
 		}
 	} else if (q->listing && is_anon(c)) {
-		emit(q, C_STR(q, c));
+		emit(q, "_");			// one from functor/3 has no name
 	} else if (q->listing) {
 		emit(q, get_slot_name(q, slot_nbr, q->listing||q->portray_vars, tmpbuf));
 	} else if (!running && !is_ref(c)) {

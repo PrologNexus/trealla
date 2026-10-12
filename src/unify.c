@@ -897,6 +897,29 @@ bool unify_head(query *q, cell *goal, pl_ctx goal_ctx, cell *head, pl_ctx head_c
 
 		cell *c1 = deref(q, p1, goal_ctx);
 		pl_ctx c1_ctx = q->latest_ctx;
+
+		// A '_' just inside a head argument occurs nowhere else: binding it does nothing but pin frames, so match around it.
+
+		if (is_interned(p2) && is_interned(c1) && get_arity(p2)
+			&& (get_arity(c1) == get_arity(p2)) && (c1->val_off == p2->val_off)) {
+			cell *a1 = c1 + 1, *a2 = p2 + 1;
+
+			for (uint32_t j = get_arity(p2); j--; a1 += a1->num_cells, a2 += a2->num_cells) {
+				if (is_var(a2) && is_anon(a2))
+					continue;
+
+				cell *d1 = deref(q, a1, c1_ctx);
+				pl_ctx d1_ctx = q->latest_ctx;
+				cell *d2 = deref(q, a2, head_ctx);
+				pl_ctx d2_ctx = q->latest_ctx;
+
+				if (!unify_internal(q, d1, d1_ctx, d2, d2_ctx, 3))
+					return unify_finish(q, false, goal, goal_ctx, head, head_ctx);
+			}
+
+			continue;
+		}
+
 		cell *c2 = deref(q, p2, head_ctx);
 		pl_ctx c2_ctx = q->latest_ctx;
 
