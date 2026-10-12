@@ -301,9 +301,17 @@ predicate *find_predicate(module *m, cell *c)
 	}
 
 	set_arity(&tmp, arity);
+	predicate *pr = NULL;
+
+	// The first entry under the key is nearly always live, and sl_get() takes no iterator lock.
+
+	if (!sl_get(m->index, &tmp, (const void**)&pr))
+		return NULL;
+
+	if (pr && !pr->is_abolished)
+		return pr;
 
 	sliter *iter = sl_find_key(m->index, &tmp);
-	predicate *pr = NULL;
 
 	while (sl_next_key(iter, (void*)&pr)) {
 		if (!pr || pr->is_abolished)
