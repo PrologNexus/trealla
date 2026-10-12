@@ -5199,11 +5199,15 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 	pl_idx arg_idx = p->cl->cidx, save_idx = 0;
 	bool last_op = true, is_func = false, last_num = false;
 	bool last_bar = false, last_prefix = false, last_postfix = false;
+	bool prev_operator = false, this_operator = false;
 	int entered = p->entered;
 	unsigned arity = 1;
 	p->depth++;
 
 	while (get_token(p, last_op, last_postfix)) {
+		prev_operator = this_operator;
+		this_operator = false;
+
 		if (p->error && !p->do_read_term)
 			break;
 
@@ -5809,6 +5813,8 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			priority = search_op(p->m, SB_cstr(p->token), &specifier, last_op && !last_postfix);
 		}
 
+		const int op_priority = priority;
+
 		if (!SB_strcmp(p->token, "!") &&
 			((*p->srcptr == ')') || (*p->srcptr == ';') || (*p->srcptr == ',') || (*p->srcptr == '.')))
 			p->quote_char = 1;
@@ -5870,6 +5876,22 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 		is_func = last_op && is_interned(&p->v) && !specifier && !last_num && (*p->srcptr == '(');
 
+		// Under strict_iso an operator taken as an atom must stand alone, as an argument or between brackets
+
+		if (p->flags.strict_iso && op_priority && !priority && !is_func && !p->is_quoted) {
+			char *s = eat_space(p);
+			int nextch = s ? *s : 0;
+
+			if (prev_operator || ((nextch != ',') && (nextch != ')') && (nextch != ']') && (nextch != '|') && (nextch != '}'))) {
+				if (!p->do_read_term)
+					fprintf(stderr, "Error: syntax error, parens needed around operator '%s', %s:%d\n", SB_cstr(p->token), get_loaded(p->m, p->m->filename), p->line_num);
+
+				p->error_desc = "parens_needed";
+				p->error = true;
+				break;
+			}
+		}
+
 		if (!is_func && last_op && (is_arg_processing && priority >= 1200) && !p->is_quoted) {
 			if (!p->do_read_term)
 				fprintf(stderr, "Error: syntax error, parens needed around operator '%s', %s:%d\n", SB_cstr(p->token), get_loaded(p->m, p->m->filename), p->line_num);
@@ -5924,6 +5946,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 		last_op = SB_strcmp(p->token, ")") && priority;
 		last_postfix = IS_POSTFIX(specifier);
 		last_prefix = last_op && IS_PREFIX(specifier);
+		this_operator = priority;
 
 		p->start_term = false;
 		cell *c = make_a_cell(p);

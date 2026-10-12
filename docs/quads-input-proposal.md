@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#50, s#270, s#271.**
+**Stage 3 — the suite. Implemented for s#1..s#100, s#270, s#271.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -169,8 +169,14 @@ unbracketed as an operand, `* = a` for `(*)=a` (s#27); the reader took
 a minus after a postfix operator as prefix, so `1e-9` with `e` a postfix
 operator failed to read (s#50); and `\e` and `\d` were accepted in strict mode
 (s#17, s#19, s#21). A syntax error is described with how far the reader
-got, which the standard leaves open. The rest of that page remains to
-encode.
+got, which the standard leaves open.
+
+s#51..s#100 are in `tests/issues/test1099c.pl`, the same way. Trealla
+passes all 50 after one more fix: in strict mode an operator taken as
+an atom must stand alone, as an argument, a list element or between
+brackets, so `- = - .` and `write_canonical((-;))` are syntax errors,
+as in Scryer (s#76..s#78, s#86..s#89). By default they still read. The
+rest of that page remains to encode.
 
 ## 5. Dependencies
 

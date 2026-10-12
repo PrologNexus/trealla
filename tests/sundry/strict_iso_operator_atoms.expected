@@ -1,0 +1,28 @@
+f(*) ok
+[:-,-] ok
+(*)=(*) ok
+(a,(*)) ok
+- (-) ok
+X = (+) ok
+maplist(=(1),[1]) ok
+[-] ok
+- = - 1 ok
+(-;) ok
+(a, *) ok
+f(* = a) ok
+* :- a ok
+a = mod ok
+f(*) ok
+[:-,-] ok
+(*)=(*) ok
+(a,(*)) ok
+- (-) ok
+X = (+) ok
+maplist(=(1),[1]) ok
+[-] ok
+- = - 1 syntax_error
+(-;) syntax_error
+(a, *) syntax_error
+f(* = a) syntax_error
+* :- a syntax_error
+a = mod syntax_error
