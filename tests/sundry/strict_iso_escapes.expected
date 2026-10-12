@@ -1,0 +1,10 @@
+'\e' [27]
+'\d' [127]
+'\s' [32]
+'\a' [7]
+'\x41\' [65]
+'\e' syntax_error
+'\d' syntax_error
+'\s' syntax_error
+'\a' [7]
+'\x41\' [65]

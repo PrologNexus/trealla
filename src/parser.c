@@ -3870,7 +3870,9 @@ static int get_escape(parser *p, const char **_src, bool *error, bool number)
 	int ch = (unsigned char)*src++;
 	const char *ptr = strchr(g_anti_escapes, ch);
 
-	if (ptr && ((ch != 's') || !p->flags.strict_iso))
+	// \s, \e and \d are extensions, so strict ISO refuses them
+
+	if (ptr && (!p->flags.strict_iso || ((ch != 's') && (ch != 'e') && (ch != 'd'))))
 		ch = g_escapes[ptr-g_anti_escapes];
 	else if ((isdigit(ch) || (ch == 'x')
 		|| (((ch == 'u') || (ch == 'U')) && (p->flags.json || !p->flags.strict_iso))
