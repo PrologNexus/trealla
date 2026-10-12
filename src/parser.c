@@ -5802,7 +5802,9 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			}
 #endif
 
-			priority = search_op(p->m, SB_cstr(p->token), &specifier, last_op);
+			// A postfix operator completes an operand, so what follows it is read as infix where it can be
+
+			priority = search_op(p->m, SB_cstr(p->token), &specifier, last_op && !last_postfix);
 		}
 
 		if (!SB_strcmp(p->token, "!") &&

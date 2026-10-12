@@ -11,5 +11,5 @@ opm3-(=)-none
 user-(=)-sees(700,xfx)
 user- ~~> - none
 parsed(x=y)
-user- ^ - sees(150,xfy)
-opm1- ^ - sees(150,xfy)
+user-(^)-sees(150,xfy)
+opm1-(^)-sees(150,xfy)

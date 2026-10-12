@@ -1856,6 +1856,7 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 	if ((lhs_pri_1 == my_priority) && is_op_yfx) lhs_parens = false;
 	if (lhs_pri_2 > 0) lhs_parens = true;
 	if (is_compound(lhs) && (lhs_pri_1 <= my_priority) && (lhs->val_off == g_plus_s)) { lhs_parens = false; }
+	if (is_interned(lhs) && !get_arity(lhs) && lhs_pri_1) lhs_parens = true;	// any operator atom as an operand, not only a prefix one
 	bool lhs_space = lhs_postfix;
 
 	if ((q->last_thing != WAS_SPACE) && lhs_space) {
@@ -1978,7 +1979,7 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 	if ((rhs_pri_1 == my_priority) && is_op_xfy)
 		rhs_parens = false;
 
-	if (rhs_pri_2 > 0)
+	if ((rhs_pri_2 > 0) || (is_interned(rhs) && !get_arity(rhs) && rhs_pri_1))
 		rhs_parens = true;
 
 	if ((q->last_thing != WAS_SPACE) && space && !rhs_parens && !quote) {
