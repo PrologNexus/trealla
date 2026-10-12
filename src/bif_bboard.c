@@ -332,6 +332,7 @@ static bool bif_bb_b_put_2(query *q)
 	sl_set(m->keyval, key, val);
 	prolog_unlock(q->pl);
 
+	pin_refs(q, val, num_cells, 0);
 	return true;
 }
 
@@ -810,6 +811,7 @@ static bool bif_sys_gvar_put_3(query *q)
 		}
 
 		sl_set(t->gvars, key, g);			// on top of what it shadows
+		pin_refs(q, val, val->num_cells, 0);
 	} else {
 		while (sl_del(t->gvars, key))
 			;

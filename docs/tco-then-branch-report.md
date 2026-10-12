@@ -15,7 +15,7 @@ parser.c a bit"). Re-verified against `1954a4e`.
 | 7. What a collector would free | **simulated** - 100% of frames in a recursive workload, 47% in chess; roots known |
 | 8. What a collector may move | **audited** - compact frames and slots, renumber indices, leave the heap in place |
 | 9. Whether to build it | **not now** - 7.7x memory for 3-23% time, a permanent tax, and nothing cheaper left |
-| 10. What the head rule covers for | **hypothesis, untested** - attribute and blackboard stores keep frame references and pin nothing; two fixes planned |
+| 10. What the head rule covers for | **fix 1 landed** - the stores pin, the head rule only vetoes a tail call; accumulator loops run in constant frames |
 | Addendum. Disjunction quadratic (#1106) | **landed** |
 
 Section 4 is the live one and was re-measured on `1954a4e`; its numbers
@@ -831,8 +831,8 @@ carrying a collector.
 
 ## 10. What the head rule is covering for
 
-Written on `6a9f703e`, from reading the code; nothing in this section has
-been run yet.
+Written on `6a9f703e` from reading the code. The probes further down confirm
+the reading.
 
 **The rule is broader than its binding needs.** The var-var head rule in
 `set_var()` pins the callee's frame whenever a head variable is bound to a
@@ -878,11 +878,40 @@ attribute. That is plausible, not traced. The trail-frame-index experiment
 (`docs/trail-frame-index.md`: recover regardless of the pin, `test0338` fails)
 is consistent too, since clpb uses both stores.
 
-**It may be a live bug today.** A frame that never receives an older variable
-is not pinned. So `p :- b_setval(k, f(X)).` stores a ref into `p`'s frame,
-and that frame is recovered when `p` returns. The same may hold for a
-`freeze/2` on a local variable that then escapes through the blackboard. A
-two-line probe settles it either way.
+**It is a live bug today.** A frame that never receives an older variable is
+not pinned, so what it stores points into a frame that is recovered when it
+returns. The next call lands on the same index, and the stored term then
+reads that call's slots. Probed on `4a35da44`, against SWI 10.1.16:
+
+```prolog
+p :- '$bb_b_put'(k, '$bb'(f(X, Y))), X = x1, Y = y1.
+q(A, B, C) :- A = 1, B = 2, C = 3.
+t1 :- p, q(_, _, _), '$bb_get'(k, '$bb'(T)), write(T), nl.
+
+p(T) :- arg(1, T, X), put_atts(X, tag(g(Y))), Y = hello.
+p0(T) :- p(T).
+t6 :- T = f(_), p0(T), q(_, _, _), arg(1, T, V), get_atts(V, tag(G)), write(G), nl.
+```
+
+| probe | Trealla | SWI |
+|---|---|---|
+| `t1`, blackboard | `f(1,2)` | `f(x1,y1)` |
+| the same with `X` and `Y` left unbound | `f(1,2)` | two variables |
+| then binding through the stored term | fails | succeeds |
+| `t6`, attribute; `p` gets `X` through `arg/3` | `g(3)` | `g(hello)` |
+| the same, with `X` passed in as `p`'s argument | `g(hello)` | `g(hello)` |
+
+Each wrong value is `q`'s binding for the slot the stored ref names: `Y` is
+`p`'s third variable, so `g(3)` is `q`'s `C`. The last two rows differ only in
+how `p` gets the older variable. Through head unification the var-var rule
+pins `p`; through `arg/3` it never fires.
+
+In ordinary use these stores are reached through wrappers, and the wrappers
+hide the bug. `bb_b_put/2`, `freeze/2` and `dif/2` are Prolog predicates.
+Each gets its own frame pinned - by `pin_query`, or by freeze's attributed
+`Fresh` variable - and that frame keeps `p`'s from being recovered. Every
+probe above answers correctly when written with the wrappers. `put_atts/2`
+has no wrapper, though, so `t6` is ordinary user code going wrong today.
 
 **Fix 1: pin at the stores, then narrow the rule.** Small; it is the fifth
 attempt plus two pins.
@@ -947,8 +976,101 @@ and only if `giso`-shaped programs matter.
 - Section 9's verdict on a collector stands, and fix 2 gets most of what a
   collector would, without its pauses or renumbering.
 
-**Order:** the probes first, to confirm the reading. Then fix 1 on a branch,
-under the assertion build. Then measure `giso` and decide on fix 2.
+**Order:** the probes, done above. Then fix 1 on a branch, under the assertion
+build. Then measure `giso` and decide on fix 2.
+
+### Fix 1, as built
+
+Built on branch `store-pins`, on `4a35da44`, and brought onto `main` at
+`0e046ec9` on 2026-10-12. The assertion build was not needed in the end:
+bisecting by binding event found each remaining problem faster.
+
+**What changed:**
+
+- **The stores pin.** `pin_refs()` pins every frame a kept copy refers into.
+  `do_put_atts()` pins those younger than the attributed variable's frame, and
+  `bb_b_put` pins all of them. The other clone sites all renumber their copy
+  (`rebase_term()`) or use it only within the call.
+- **So does `b_setval/2`.** `'$gvar_put'/3`, added to `main` after the branch,
+  keeps a backtrackable value the way `bb_b_put` does, sharing the term's
+  variables, and pins all of them too. Without it the patched engine answers
+  `f(k,f(k,f(k,...` for `p :- b_setval(k, f(X,Y)), X = x1, Y = y1.` read back
+  after another call. `nb_setval/2` copies with fresh variables and needs
+  nothing.
+- **Trail compaction starts where the frame's call began.** With more frames
+  reused, `reuse_frame()`'s scan from the newest choicepoint went quadratic and
+  took Logtalk's `tools/sarif` tests from about 8 s to 52 s. A frame now records
+  the trail top when its call began (`f->tp`) and the scan starts there. The
+  frame holds its module by id instead of by pointer, which keeps it at 72
+  bytes.
+- **The head rule vetoes a tail call and nothing more.** It fires only when a
+  new frame's variable is bound to one of the current frame's. It sets a new
+  `q->no_tco`, which `commit_frame()` reads and `push_frame()` does not copy,
+  so the callee is no longer born pinned. `pin_query` does the same, for the
+  same reason.
+- **A residue scan pins what it will read.** `'$list_attributed'/2` - behind
+  `call_residue_vars/2`, and behind quads' `maybe` - walks the trail from a mark
+  and reads each entry's slot by frame index. Once frames are recovered, an
+  entry can name an index since reused, and the scan reports whatever
+  attributed variable now sits there: `test0838` listed `[X,Y,_6,_6,_5,...]`.
+  So `'$mark_start'/1` sets a sticky `q->residue_used`, and while it is set,
+  `add_trail()` pins the frame each entry names. Pinning on `attrs_used`
+  instead was tried and was both too wide and too late: entries made before the
+  first attribute escaped it.
+
+**Also found, and unrelated to frames.** `test1061` lost its solutions
+because two goal expansions shared a variable. Each expansion prints its
+result, naming fresh variables after their slots, and parses it back.
+`fixup_expansion_var_collisions()` renames a name that collides with an earlier
+expansion's, but numbered the renamed variable from the sub-parser's count,
+which leaves out renamed variables. A second collision in a row got the same
+number. This clause fails on `main` for that reason, the last two constraints
+sharing one variable:
+
+```prolog
+g(NT, NC, NR) :- NT #= NC*NR, NC #>= 1, NR #>= 1, NR #>= 0.
+```
+
+On `main` the frame layout happened to give `test1061`'s fourth expansion a
+fresh name. That was fixed on its own, in `03c461ea` (v3.12.1).
+
+**Measured,** against `main` at `4a35da44`:
+
+| workload | `main` | `store-pins` |
+|---|---|---|
+| `sum/3`, 3,000,000 iterations | 3,000,002 frames, 765 MB | 2 frames, 10 MB |
+| `sum2/3`, 3,000,000 | 3,000,001 frames, 628 MB | 2 frames, 10 MB |
+| `mk_eq/1` in a tail loop, 3,000,000 | 6,000,002 frames, 813 MB | 3 frames, 10 MB |
+| chess | 21,398,418 TCOs, 2,470,497 peak frames | 21,481,600, 2,407,109 |
+| chess instructions | 94.21G | 94.31G (+0.1%) |
+| `giso` parse, `g64000` | 2,002,812 frames, 588 MB | 1,578,785 frames, 531 MB |
+
+Chess searches identically: the same matches, backtracks and retries. It makes
+83,182 more tail calls, the same figure section 4's fifth attempt measured.
+`giso` improves only in part, as expected: its `pin_v` and `pin_cur` escapes
+are genuine, and each still strands the frames below it. That is fix 2's job.
+
+Measured again when it landed, against `main` at `0e046ec9`:
+
+| workload | `main` | fix 1 |
+|---|---|---|
+| `sum/3`, 3,000,000 iterations | 766 MB | 10 MB |
+| chess instructions | 92.77G | 92.01G (-0.8%) |
+| chess peak memory | 901 MB | 886 MB |
+| `giso` parse, `g64000` | 2,002,812 frames, 588 MB | 1,578,785 frames, 531 MB |
+| Logtalk `tools/sarif` tests | 7.4 s | 7.0 s |
+
+**Tests.** The suite passes 472 of 473 before regenerating `test0101`, whose
+`test6` line records 4 frames now against 200,004 before. misc passes 39/39.
+Logtalk's `examples/threads` passes, 22 sets and 83 tests. New regression
+tests: `tests/sundry/store_pins.pl` (the probes above) and
+`tests/sundry/tco_accumulator.pl`, both failing on `main`.
+
+On `0e046ec9` the suite passes 511 of 511 once
+`tests/sundry/clause_retract_module`'s expected output is regenerated: it
+prints a fresh variable, whose number follows the frame layout. misc passes
+52/52, run on its own (two copies run at once collide on ports). Logtalk's
+`examples/threads` passes 22 sets and 83 tests, and `tools/sarif` 22 tests.
 
 ---
 

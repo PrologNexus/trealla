@@ -1464,6 +1464,12 @@ bool add_trail(query *q, pl_ctx c_ctx, unsigned c_var_nbr, cell *attrs)
 	tr->val_ctx = c_ctx;
 	tr->var_num = c_var_nbr;
 	tr->attrs = attrs;
+
+	// '$list_attributed'/2 reads entries back from a mark by frame index, so once one is set, keep the frame.
+
+	if (q->residue_used && !(c_var_nbr & TRAIL_FRAME_LAYOUT))
+		pin_frame(q, c_ctx);
+
 	return true;
 }
 
@@ -1567,6 +1573,7 @@ static void push_frame(query *q)
 	}
 
 	f_new->ovf = q->slot_pages->slots;
+	f_new->tp = GET_CURR_CHOICE()->st.tp;
 	f_new->no_recov = q->no_recov;
 	f_new->chgen = ++q->chgen;
 	f_new->hp = q->st.hp;
@@ -1658,8 +1665,13 @@ static bool reuse_frame(query *q, unsigned num_vars)
 		}
 	}
 
+	// Only from where this frame's call began: before that, no entry can name the values being moved or released.
+
 	if (moved) {
 		pl_idx w = GET_CHOICE(q->st.cp - 2)->st.tp;
+
+		if (w < f_cur->tp)
+			w = f_cur->tp;
 
 		for (pl_idx r = w, end = q->st.tp; r < end; r++) {
 			trail *tr = get_trail(q, r);
@@ -1682,6 +1694,7 @@ static bool reuse_frame(query *q, unsigned num_vars)
 			pop_trail(q);
 	}
 
+	f_cur->tp = q->st.tp;
 	q->st.sp = f_cur->slots + f_cur->actual_slots;
 	check_slots_highwater(q);
 	q->st.dbe->tcos++;
@@ -1777,7 +1790,7 @@ static void commit_frame(query *q, bool head_has_vars)
 
 	clause *cl = &q->st.dbe->cl;
 	frame *f = GET_CURR_FRAME();
-	f->m = q->st.m;
+	f->mid = q->st.m->id;
 
 	bool is_det = !head_has_vars && cl->is_unique
 		&& !q->st.pr->is_var_in_head && !q->st.pr->is_var_in_first_arg
@@ -1808,7 +1821,7 @@ static void commit_frame(query *q, bool head_has_vars)
 
 	if (last_match
 		&& is_tail_call(q->st.instr)
-		&& !q->no_recov
+		&& !q->no_recov && !q->no_tco
 		&& !f->heap_pinned
 		&& (q->st.fp == (q->st.cur_ctx + 1))
 		) {
@@ -2212,7 +2225,7 @@ static bool resume_frame(query *q)
 	q->st.instr = f->instr;
 	q->st.cur_ctx = f->prev;
 	f = GET_CURR_FRAME();
-	q->st.m = f->m;
+	q->st.m = module_by_id(q->pl, f->mid);
 	return true;
 }
 

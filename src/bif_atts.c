@@ -117,6 +117,7 @@ static bool do_put_atts(query *q, cell *attr, pl_ctx attr_ctx, bool is_minus)
 	trim_heap(q);
 	CHECKED(undo_on_backtrack(q, l, UNDO_CELLS));
 	e->c.val_attrs = l;
+	pin_refs(q, l, l->num_cells, p1_ctx+1);
 	q->attrs_used = true;
 	return true;
 }
@@ -480,6 +481,7 @@ static bool bif_sys_mark_start_1(query * q)
 	GET_FIRST_ARG(p1,var);
 	cell mark;
 	make_uint(&mark, q->st.tp);
+	q->residue_used = true;
 	unify(q, p1, p1_ctx, &mark, q->st.cur_ctx);
 	return true;
 }

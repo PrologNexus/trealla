@@ -632,11 +632,12 @@ struct slot_ {
 
 struct frame_ {
 	cell *instr;
-	module *m;
 	uint64_t dbgen, chgen;
 	slot *slots, *ovf;					// initial and create_vars() runs, the first page's start standing in for index 0
+	uint32_t mid;						// the module, by id as an instruction holds it: a pointer would not leave room for tp
 	uint32_t hp_num, initial_slots, actual_slots;
 	pl_idx hp;
+	pl_idx tp;							// the trail's top when this frame's call began: entries naming its slots lie above
 	pl_ctx prev;
 	bool no_recov:1;
 	bool heap_pinned:1;
@@ -1129,6 +1130,7 @@ struct query_ {
 	bool is_redo:1;
 	bool run_hook:1;
 	bool attrs_used:1;
+	bool residue_used:1;					// '$mark_start'/1 has run: trail entries may be read back by frame index
 	bool sto_watch:1;					// '$sto_begin'/0 is listening for a binding that closes a cycle
 	bool sto_seen:1;					// and one did: the query is subject to occurs check
 	bool do_dump_vars:1;
@@ -1136,6 +1138,7 @@ struct query_ {
 	bool portray_vars:1;
 	bool status:1;
 	bool no_recov:1;
+	bool no_tco:1;						// the last unification refers into the current frame: a tail call may not reuse it
 	bool has_vars:1;
 	bool error:1;
 	bool did_throw:1;

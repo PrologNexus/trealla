@@ -3,7 +3,7 @@ t_retract_all: [1,2,3]/[]
 t_retract_cut: 2/[3]
 t_retractall: []
 t_bound_module: [1,2,3]
-t_retract_rule: _37-(user:d(_37))
+t_retract_rule: _18-(user:d(_18))
 t_clause_ref: d(1)-true
 t_caller_module: user_d
 t_missing: ok

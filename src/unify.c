@@ -247,14 +247,25 @@ int compare(query *q, cell *p1, pl_ctx p1_ctx, cell *p2, pl_ctx p2_ctx)
 	return compare_internal(q, p1, p1_ctx, p2, p2_ctx, 0);
 }
 
-// An older variable now refers into this frame's slots: keep them from recovery and from reuse by a tail call.
+// Something older now refers into this frame's slots: keep them from recovery and from reuse by a tail call.
 
-static void pin_frame(query *q, pl_ctx ctx)
+void pin_frame(query *q, pl_ctx ctx)
 {
 	frame *f = GET_FRAME(ctx);
 	f->no_recov = true;
 	f->heap_pinned = true;
 	q->no_recov = true;
+}
+
+// A copy kept beyond the call, as an attribute value or a blackboard entry, refers into frames by index: keep
+// every one from `from` up alive, since nothing else records the reference.
+
+void pin_refs(query *q, const cell *c, pl_idx num_cells, pl_ctx from)
+{
+	for (pl_idx i = 0; i < num_cells; i++, c++) {
+		if (is_ref(c) && (c->val_ctx >= from))
+			pin_frame(q, c->val_ctx);
+	}
 }
 
 // Only a variable in a frame older than the newest choicepoint needs its binding undone: backtracking discards any
@@ -288,11 +299,13 @@ static bool set_var(query *q, const cell *c, pl_ctx c_ctx, cell *v, pl_ctx v_ctx
 	if (is_var(v)) {
 		make_ref(&e->c, v->var_num, v_ctx);
 
+		// A new frame's variable bound to one of the current frame's: a tail call would reuse the current frame.
+
 		if ((c_ctx == q->st.fp)
-			&& (c_ctx != v_ctx)
+			&& (c_ctx != v_ctx) && (v_ctx >= q->st.cur_ctx)
 			&& !is_temporary(c) && !is_void(c)
 			) {
-			q->no_recov = true;
+			q->no_tco = true;
 			q->total_no_recovs++;
 		}
 
@@ -313,7 +326,7 @@ static bool set_var(query *q, const cell *c, pl_ctx c_ctx, cell *v, pl_ctx v_ctx
 			return true;
 
 		if (pin_query) {
-			q->no_recov = true;
+			q->no_tco = true;
 			q->total_no_recovs++;
 		}
 
@@ -812,7 +825,7 @@ static bool unify_internal(query *q, cell *p1, pl_ctx p1_ctx, cell *p2, pl_ctx p
 
 static inline void unify_start(query *q)
 {
-	q->has_vars = q->no_recov = false;
+	q->has_vars = q->no_recov = q->no_tco = false;
 	q->run_hook = false;
 	q->before_hook_tp = q->st.tp;
 	if (++q->vgen == 0) q->vgen = 1;
