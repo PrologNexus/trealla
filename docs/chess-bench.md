@@ -1,8 +1,11 @@
 # samples/chess.pl across Prolog systems
 
-Measured 2026-09-26 on an Apple Silicon Mac (macOS, darwin27). Trealla was re-measured after the
-clause-matching changes since v3.11.4: 4.82s at 10ceae67, 4.17s at v3.11.5, 4.09s at v3.11.6, 3.81s at
-v3.11.7, and 3.67s at v3.11.8, against 3.80s for v3.11.7 in the same interleaved runs.
+Measured 2026-09-26 on an Apple Silicon Mac (macOS, darwin27), with Trealla re-measured 2026-10-13.
+The clause-matching changes since v3.11.4 took Trealla from 4.82s at 10ceae67 to 4.17s at v3.11.5,
+4.09s at v3.11.6, 3.81s at v3.11.7 and 3.67s at v3.11.8. v3.13.5 ran 3.72s, and v3.13.6, which
+compiles `member/2` calls in clause bodies to a builtin, 2.36s in the same interleaved runs.
+
+The commands below are run from `samples/`.
 
 `main` plays three scripted white moves (e2e4, d2d3, c1e3) and the program
 replies with a depth-3 alpha-beta search. Every system gives the same replies:
@@ -146,4 +149,5 @@ gets a pre-processed copy:
 
 - Several systems needed stacks far above their defaults (BinProlog, GNU Prolog,
   ECLiPSe). Trealla, SWI, Scryer, Ciao, XSB and CxProlog manage with their defaults.
-- Trealla and CxProlog are level at the bottom: Trealla is about 4.5-5× BinProlog and ECLiPSe, 1.8× SWI.
+- Trealla 3.13.6 sits between SWI and Scryer: about 2.8-3.3× BinProlog and ECLiPSe, 1.2× SWI, and 7%
+  ahead of Scryer. Before compiling `member/2` it was level with CxProlog at the bottom.
