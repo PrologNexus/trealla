@@ -585,7 +585,7 @@
       timeout-minutes: 30
       env:
         RISCOS_TOOLCHAIN_URL: https://github.com/netsurf-browser/toolchains/releases/download/gh-master-unstable/arm-riscos-gnueabi.tar.gz
-        RISCOS_TOOLCHAIN_SHA256: 1b7aaa8b4a35e8de9e263d7bd36e52e6f960b360a4ffb0e5c0068de5a07fb102
+        RISCOS_TOOLCHAIN_SHA256: c1a5d741494bc9c034c8a5338ad07a9249781152064620c00ca9490e210828fd
         GCCSDK_INSTALL_CROSSBIN: /opt/netsurf/arm-riscos-gnueabi/cross/bin
         GCCSDK_INSTALL_ENV: /opt/netsurf/arm-riscos-gnueabi/env
       steps:
