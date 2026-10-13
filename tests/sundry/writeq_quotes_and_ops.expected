@@ -1,0 +1,14 @@
+'^`' same
+'a"b' same
+'a`b' same
+'it\'s' same
++ 1^2 same
++ a^b same
++ (a=b) same
+- (1^2) same
+A
+- B
+-1 '$VAR'
+- [1]
+[1,2]
+- (1)

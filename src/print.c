@@ -379,6 +379,10 @@ static bool format_into(stringbuf *sb, const char *src, int srclen, bool dq, boo
 		if ((ch == '\'') && dq)
 			ptr = 0;
 
+		// " needs no escape between single quotes, and ` none anywhere
+		if (((ch == '"') && !dq && !json) || (ch == '`'))
+			ptr = 0;
+
 		if (ch && ptr) {
 			if (!sb_try_putchar(sb, '\\')) return false;
 			if (!sb_try_putchar(sb, g_anti_escapes[ptr-g_escapes])) return false;
@@ -1672,6 +1676,17 @@ static bool starts_with_number(query *q, cell *c, pl_ctx c_ctx, bool running)
 		if (is_number(c))
 			return !is_negative(c);
 
+		if (is_iso_list(c))		// written [...] even when . is an operator
+			return false;
+
+		if (q->numbervars && is_interned(c) && (c->val_off == g_sys_var_s) && (get_arity(c) == 1)) {
+			pl_ctx a_ctx = c_ctx;
+			cell *a = deref_if(q, running, c + 1, &a_ctx);
+
+			if (is_integer(a) && (get_smallint(a) >= 0))	// written as a variable name
+				return false;
+		}
+
 		unsigned arity = get_arity(c), spec = 0;
 
 		if (!is_interned(c) || !arity || !match_op(q->st.m, C_STR(q, c), &spec, arity))
@@ -1800,7 +1815,6 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 
 		bool parens = false;
 		if ((!strcmp(src, ":-") || !strcmp(src, "?-")) && (rhs_pri >= my_priority)) parens = true;
-		if (!strcmp(src, "+") && (is_infix(rhs) || is_postfix(rhs))) parens = true;
 		if (rhs_pri > my_priority) parens = true;
 		if ((rhs_pri > 0) && !get_arity(rhs)) parens = true;
 		//if (my_priority && (rhs_pri == my_priority) && strcmp(src, "-") && strcmp(src, "+")) parens = true;
@@ -2087,6 +2101,15 @@ static bool print_interned(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 			my_specifier = spec;
 			my_priority = pri;
 		}
+	}
+
+	// '$VAR'(N) is written as a variable under numbervars even when '$VAR' is an operator
+
+	if (is_op && running && q->numbervars && (c->val_off == g_sys_var_s) && (get_arity(c) == 1)) {
+		cell *c1 = deref(q, FIRST_ARG(c), c_ctx);
+
+		if (is_integer(c1) && (get_smallint(c1) >= 0))
+			is_op = false;
 	}
 
 	if (q->ignore_ops || !is_op || !get_arity(c))

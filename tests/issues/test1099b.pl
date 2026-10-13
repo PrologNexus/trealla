@@ -132,7 +132,7 @@
 
 % s#38..s#41: quotes and backslashes. s#38 compares two strings, whose
 % form depends on double_quotes, so only its success is described. How
-% s#40's atom is written is left open; Trealla escapes ` and " too.
+% s#40's atom is written is left open; Trealla writes the page's example.
 
 ?- \+ \+ (read(G_0), G_0).
    inputs("\"\\'\\`\\\"\" = \"'`\"\"\"."), peeks(" ").
@@ -141,7 +141,7 @@
    inputs("'\\'\\`\\\"' = '''`\"'."), peeks("\n"), G_0 = ('\'`"' = '\'`"').
 
 ?- read(G_0), G_0.
-   inputs("writeq('\\'\\`\\\"\\\"')."), peeks("\n"), outputs("'\\'\\`\\\"\\\"'"), G_0 = writeq('\'`""').
+   inputs("writeq('\\'\\`\\\"\\\"')."), peeks("\n"), outputs("'\\'`\"\"'"), G_0 = writeq('\'`""').
 
 ?- read(G_0), G_0.
    inputs("('\\\\') = (\\)."), peeks("\n"), G_0 = (('\\') = ('\\')).
