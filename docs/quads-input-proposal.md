@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#250, s#270, s#271.**
+**Stage 3 — the suite. Implemented for s#1..s#300.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -209,7 +209,17 @@ layout, as a space is, so with `f` a prefix operator `f/*.*/(1,2)` is
 it kept only the text before the NUL when consulted, so `'\x0\'` in a
 test file read as `''` (s#225, s#250). How `write_canonical/1` names a
 variable is left open, so s#226 and s#227 describe the output with a
-grammar. The rest of that page remains to encode.
+grammar.
+
+s#251..s#300 are in `tests/issues/test1099g.pl`, but for s#270 and s#271,
+which `test1099.pl` has, and s#273, which the page does not. Trealla
+passes all 47 after four fixes in the writer: `writeq/1` no longer
+escapes `` ` `` or, inside single quotes, `"` (s#264, and s#40 now writes
+the page's own example); it writes `+(1^2)` as `+ 1^2` without brackets
+(s#277); a list is written `[1]` without brackets when `.` is an operator
+(s#278, s#283); and `'$VAR'(0)` is written `A` under `numbervars` even
+when `'$VAR'` is a postfix operator (s#279, s#296). The rest of that
+page remains to encode.
 
 ## 5. Dependencies
 
