@@ -61,28 +61,28 @@ form colour(Left, Key, Value, Right), where _colour_  is one of =red= or
 @author Vitor Santos Costa, Jan Wielemaker
 */
 
-:- use_module(library('dialect/commons')).
-
 :- meta_predicate rb_map(+,2,-), rb_partial_map(+,+,2,-), rb_apply(+,+,2,-).
 
-:- hmtype rbtree(K,V) ---> t(tree(K,V),tree(K,V)).
-:- hmtype tree(K,V)   ---> black(tree(K,V),K,V,tree(K,V))
-	               ; red(tree(K,V),K,V,tree(K,V))
-		       ; ''.
-:- hmtype cmp ---> (=) ; (<) ; (>).
-
-
-:- pred rb_new(rbtree(_K,_V)).
-:- pred rb_empty(rbtree(_K,_V)).
-:- pred rb_lookup(K,V,rbtree(K,V)).
-:- pred lookup(K,V, tree(K,V)).
-:- pred lookup(cmp, K, V, tree(K,V)).
-:- pred rb_min(rbtree(K,V),K,V).
-:- pred min(tree(K,V),K,V).
-:- pred rb_max(rbtree(K,V),K,V).
-:- pred max(tree(K,V),K,V).
-:- pred rb_next(rbtree(K,V),K,pair(K,V),V).
-:- pred next(tree(K,V),K,pair(K,V),V,tree(K,V)).
+% Types for prolog-commons' checker (library(dialect/commons)), which
+% Trealla doesn't have, so they stay as comments:
+%
+% :- hmtype rbtree(K,V) ---> t(tree(K,V),tree(K,V)).
+% :- hmtype tree(K,V)   ---> black(tree(K,V),K,V,tree(K,V))
+%	               ; red(tree(K,V),K,V,tree(K,V))
+%		       ; ''.
+% :- hmtype cmp ---> (=) ; (<) ; (>).
+%
+% :- pred rb_new(rbtree(_K,_V)).
+% :- pred rb_empty(rbtree(_K,_V)).
+% :- pred rb_lookup(K,V,rbtree(K,V)).
+% :- pred lookup(K,V, tree(K,V)).
+% :- pred lookup(cmp, K, V, tree(K,V)).
+% :- pred rb_min(rbtree(K,V),K,V).
+% :- pred min(tree(K,V),K,V).
+% :- pred rb_max(rbtree(K,V),K,V).
+% :- pred max(tree(K,V),K,V).
+% :- pred rb_next(rbtree(K,V),K,pair(K,V),V).
+% :- pred next(tree(K,V),K,pair(K,V),V,tree(K,V)).
 
 % create an empty tree.
 %%	rb_new(-T) is det.
