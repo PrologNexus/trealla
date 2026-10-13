@@ -5264,7 +5264,6 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			&& (*p->srcptr != '}')
 			&& !isalnum((unsigned char)*p->srcptr)
 			&& (*p->srcptr != '_')
-			&& ((*p->srcptr != ' ') || !p->is_op)
 			) {
 
 			// The character after the end token has to be looked at to
