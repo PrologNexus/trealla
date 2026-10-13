@@ -5239,6 +5239,10 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 		prev_operator = this_operator;
 		this_operator = false;
 
+		// Functional notation needs the ( straight after the name, so look before any layout or comment is skipped
+
+		const bool paren_next = p->srcptr && (*p->srcptr == '(');
+
 		if (p->error && !p->do_read_term)
 			break;
 
@@ -5819,7 +5823,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 		p->last_close = false;
 
-		if (p->is_var && (*p->srcptr == '(')) {
+		if (p->is_var && paren_next) {
 			if (!p->do_read_term)
 				fprintf(stderr, "Error: syntax error, var as functor, %s:%d\n", get_loaded(p->m, p->m->filename), p->line_num);
 
@@ -5925,14 +5929,14 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 		// Operators in canonical form..
 
-		if (last_op && priority && (*p->srcptr == '(')) {
+		if (last_op && priority && paren_next) {
 			p->v.tag = TAG_INTERNED;
 			specifier = 0;
 			priority = 0;
 			p->quote_char = 0;
 		}
 
-		is_func = last_op && is_interned(&p->v) && !specifier && !last_num && (*p->srcptr == '(');
+		is_func = last_op && is_interned(&p->v) && !specifier && !last_num && paren_next;
 
 		// Under strict_iso an operator taken as an atom, quoted or not, must stand alone, as an argument or between brackets
 
