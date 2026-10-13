@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#300.**
+**Stage 3 — the suite. Implemented for s#1..s#350.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -218,8 +218,12 @@ escapes `` ` `` or, inside single quotes, `"` (s#264, and s#40 now writes
 the page's own example); it writes `+(1^2)` as `+ 1^2` without brackets
 (s#277); a list is written `[1]` without brackets when `.` is an operator
 (s#278, s#283); and `'$VAR'(0)` is written `A` under `numbervars` even
-when `'$VAR'` is a postfix operator (s#279, s#296). The rest of that
-page remains to encode.
+when `'$VAR'` is a postfix operator (s#279, s#296).
+
+s#301..s#350 are in `tests/issues/test1099h.pl`. Trealla passes all 50
+without changes. How `writeq/1` names a variable is again left open
+(s#332), so a grammar describes it. The rest of that page remains to
+encode.
 
 ## 5. Dependencies
 
