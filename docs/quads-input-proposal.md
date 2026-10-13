@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#200, s#270, s#271.**
+**Stage 3 — the suite. Implemented for s#1..s#250, s#270, s#271.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -200,8 +200,16 @@ f` is `f(f(0))` (s#160), and tokens left over in an argument, list element
 or `{}` term are a syntax error instead of being dropped or taken for the
 next argument or the tail, so `1 p p p 2` with `p` both `fy` and `yfx` is
 an error inside `write_canonical/1` as it is at the top (s#162). A quoted
-`'.'` right before the end token was taken for it. The rest of that page
-remains to encode.
+`'.'` right before the end token was taken for it.
+
+s#201..s#250 are in `tests/issues/test1099f.pl`. Trealla passes all 50
+after two fixes in the reader. A comment between a name and `(` is
+layout, as a space is, so with `f` a prefix operator `f/*.*/(1,2)` is
+`f((1,2))` and not functional notation (s#234). And an atom with a NUL in
+it kept only the text before the NUL when consulted, so `'\x0\'` in a
+test file read as `''` (s#225, s#250). How `write_canonical/1` names a
+variable is left open, so s#226 and s#227 describe the output with a
+grammar. The rest of that page remains to encode.
 
 ## 5. Dependencies
 
