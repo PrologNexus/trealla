@@ -1139,16 +1139,17 @@ static bool dump_variable(query *q, cell *c, pl_ctx c_ctx, bool running)
 static void print_string_canonical(query *q, cell *c)
 {
 	int cnt = 1;
+	bool quote = q->quoted > 0;		// '.' and the elements are quoted only when quoting is on
 	PROLOG_LIST_HANDLER(c);
 
-	emit(q, "'.'(");
+	emit(q, quote ? "'.'(" : ".(");
 
 	while (is_list(c)) {
 		cell *h = PROLOG_LIST_HEAD(c);
 
 		if (is_number(h)) {
 			emit_sprintf(q, "%d", (int)h->val_int);
-		} else if (needs_quoting(q->st.m, C_STR(q, h), C_STRLEN(q, h))) {
+		} else if (quote && needs_quoting(q->st.m, C_STR(q, h), C_STRLEN(q, h))) {
 			emit(q, "'");
 			emit_formatted(q, C_STR(q, h), C_STRLEN(q, h), false, false);
 			emit(q, "'");
@@ -1162,7 +1163,7 @@ static void print_string_canonical(query *q, cell *c)
 			break;
 		}
 
-		emit(q, ",'.'(");
+		emit(q, quote ? ",'.'(" : ",.(");
 		cnt++;
 	}
 
@@ -1469,9 +1470,10 @@ static void print_iso_list_canonical(query *q, cell *c, pl_ctx c_ctx, int runnin
 	pl_ctx save_ctx = c_ctx;
 	unsigned print_list = 0;
 	int cnt = 1;
+	bool quote = (q->quoted > 0) || ((running <= 0) && !q->quoted);	// as print_canonical_compound quotes a functor
 	PROLOG_LIST_HANDLER(c);
 
-	emit(q, "'.'(");
+	emit(q, quote ? "'.'(" : ".(");
 
 	while (is_list(c)) {
 		CHECK_INTERRUPT();
@@ -1505,7 +1507,7 @@ static void print_iso_list_canonical(query *q, cell *c, pl_ctx c_ctx, int runnin
 			break;
 		}
 
-		emit(q, ",'.'(");
+		emit(q, quote ? ",'.'(" : ",.(");
 		cnt++;
 	}
 
