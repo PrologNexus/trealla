@@ -1897,24 +1897,18 @@ static bool bif_thread_self_1(query *q)
 	return ok;
 }
 
+bool bif_sleep_1(query *q);
+
+// sleep/1, except that a negative time doesn't sleep rather than raising an error.
+
 static bool bif_thread_sleep_1(query *q)
 {
-	THREAD_DEBUG DUMP_TERM("*** ", q->st.instr, q->st.cur_ctx, 1);
 	GET_FIRST_ARG(p1,number);
-	int ms = (int)((is_float(p1) ? get_float(p1) : get_smallint(p1)) * 1000);
 
-	while ((ms > 0) && !q->halt && !q->pl->halt) {
-		CHECK_INTERRUPT();
-		msleep(1);
+	if (is_negative(p1) && !is_bigint(p1))
+		return true;
 
-		if (errno == EINTR)
-			return throw_error(q, q->st.instr, q->st.cur_ctx, "time_limit_exceeded", "timed_out");
-
-		ms -= 1;
-	}
-
-	THREAD_DEBUG DUMP_TERM(" -  ", q->st.instr, q->st.cur_ctx, 1);
-	return true;
+	return bif_sleep_1(q);
 }
 
 static bool bif_thread_yield_0(query *q)

@@ -252,7 +252,7 @@ static bool bif_unsetenv_1(query *q)
 	return true;
 }
 
-static bool bif_sleep_1(query *q)
+bool bif_sleep_1(query *q)
 {
 	if (q->retry)
 		return true;
@@ -265,12 +265,21 @@ static bool bif_sleep_1(query *q)
 	if (is_bigint(p1))
 		return throw_error(q, p1, p1_ctx, "domain_error", "small_integer_range");
 
-	int ms = (is_float(p1) ? get_float(p1) : get_smallint(p1)) * 1000;
+	double secs = is_float(p1) ? get_float(p1) : get_smallint(p1);
+
+	if (secs > 1e9)
+		secs = 1e9;
 
 	if (q->is_task)
-		return do_yield(q, ms);
+		return do_yield(q, (int)(secs * 1000));
 
-	while ((ms > 0) && !q->halt && !q->pl->halt) {
+	// Sleep to a deadline: counting slices down adds up each one's oversleep,
+	// and that grows when threads compete for the cores.
+
+	const uint64_t until = monotonic_time_in_usec() + (uint64_t)(secs * 1000000);
+	uint64_t now;
+
+	while (((now = monotonic_time_in_usec()) < until) && !q->halt && !q->pl->halt) {
 		CHECK_INTERRUPT();
 
 #if USE_THREADS
@@ -282,7 +291,7 @@ static bool bif_sleep_1(query *q)
 		if (t && list_count(&t->signals)) {
 			cell goal[2];
 			make_instr(goal, new_atom(q->pl, "sleep"), bif_sleep_1, 1, 1);
-			make_float(goal+1, ms / 1000.0);
+			make_float(goal+1, (until - now) / 1000000.0);
 			cell *tmp = prepare_call(q, CALL_NOSKIP, goal, q->st.cur_ctx, 1);
 			CHECKED(tmp);
 			make_call(q, tmp+goal->num_cells);
@@ -291,12 +300,21 @@ static bool bif_sleep_1(query *q)
 		}
 #endif
 
-		msleep(10);
+		const uint64_t left = until - now;
+		errno = 0;
+		msleep(left < 10000 ? (int)((left + 999) / 1000) : 10);
 
-		if (errno == EINTR)
+		if (errno == EINTR) {
+#if USE_THREADS
+			// Woken by thread_signal/2: loop round to run it as above,
+			// rather than retrying the goal, which would sleep it all again.
+
+			if (t && list_count(&t->signals) && !cancel_pending(q))
+				continue;
+#endif
+
 			return throw_timeout(q);
-
-		ms -= 10;
+		}
 	}
 
 	return true;
