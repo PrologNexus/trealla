@@ -1712,8 +1712,14 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 		if (iswalpha(ch)) space = true;
 		if (lhs_pri > my_priority) { parens = true; space = false; }
 
-		// A prefix operator would take the postfix one into its operand, so fy 1 yf reads back as fy(yf(1))
-		if ((get_arity(lhs) == 1) && IS_PREFIX(lhs_specifier)) { parens = true; space = false; }
+		// An operand whose own operator could take the postfix one into its right side, so fy 1 yf reads back as fy(yf(1)) and 1 xfy 2 yf as xfy(1,yf(2))
+		if (((get_arity(lhs) == 1) && IS_PREFIX(lhs_specifier)) || ((get_arity(lhs) == 2) && IS_INFIX(lhs_specifier))) {
+			unsigned right_max = ((lhs_specifier == OP_FY) || (lhs_specifier == OP_XFY)) ? lhs_pri : lhs_pri - 1;
+			if (right_max >= my_priority) { parens = true; space = false; }
+		}
+
+		// Any operator atom as the operand
+		if (is_interned(lhs) && !get_arity(lhs) && lhs_pri) { parens = true; space = false; }
 
 		if (!is_var(lhs) && q->max_depth && ((depth+1) >= q->max_depth)) {
 			if (q->last_thing != WAS_SPACE) emit(q, " ");
@@ -1748,14 +1754,14 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 			return true;
 		}
 
-		if ((q->last_thing != WAS_SPACE) && (space || is_lhs_yf)) {
+		if ((q->last_thing != WAS_SPACE) && (space || (is_lhs_yf && !parens))) {
 			emit(q, " ");
 			q->last_thing = WAS_SPACE;
 		}
 
 		int quote = q->quoted && needs_quoting(q->st.m, src, src_len);
 		if (quote) {
-			if (!parens) emit(q, " ");
+			if (!parens && (q->last_thing != WAS_SPACE)) emit(q, " ");
 			emit(q, quote?"'":"");
 		}
 
@@ -1877,6 +1883,7 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 	bool lhs_parens = lhs_pri_1 >= my_priority;
 	//if (lhs_postfix) lhs_parens = true;
 	if ((lhs_pri_1 == my_priority) && is_op_yfx) lhs_parens = false;
+	if ((get_arity(lhs) == 1) && (lhs_specifier == OP_FY) && (lhs_pri_1 >= my_priority)) lhs_parens = true;	// fy 1 yfx 2 reads back as fy(yfx(1,2))
 	if (lhs_pri_2 > 0) lhs_parens = true;
 	if (is_compound(lhs) && (lhs_pri_1 <= my_priority) && (lhs->val_off == g_plus_s)) { lhs_parens = false; }
 	if (is_interned(lhs) && !get_arity(lhs) && lhs_pri_1) lhs_parens = true;	// any operator atom as an operand, not only a prefix one
