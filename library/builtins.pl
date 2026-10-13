@@ -445,7 +445,7 @@ process_modules_([M|Ms], Var, Val, SoFar, Goals) :-
 modularize([], _, []).
 modularize([H|T], M, [Goal|Goals]) :-
 	functor(H, F, _),
-	(F = ',' ->
+	(F = (',') ->
 		Goal = H
 	;
 		Goal = M:H

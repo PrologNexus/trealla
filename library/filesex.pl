@@ -116,7 +116,7 @@ directory_file_path(Dir, File, Path) :-
 	(  DirParts == []
 	-> Dir = ''
 	;  DirParts == ['']
-	-> Dir = '/'
+	-> Dir = ('/')
 	;  atomic_list_concat(DirParts, '/', Dir)
 	).
 directory_file_path(_, _, _) :-
@@ -146,7 +146,7 @@ relative_file_name(Path, RelTo, RelPath) :-
 	!,
 	'$fx_reldir_segs'(RelTo, RSegs),
 	(  RSegs == []
-	-> Base = '/'
+	-> Base = ('/')
 	;  atomic_list_concat(RSegs, '/', Base0),
 	   atom_concat('/', Base0, Base)
 	),
@@ -423,7 +423,7 @@ directory_member(Dir, Member, Options) :-
 	'$fx_glob_class'(G, C, G1),
 	'$fx_glob_'(G1, N).
 '$fx_glob_'([C|G], [C|N]) :-
-	C \== '*', C \== '?', C \== '[',
+	C \== ('*'), C \== ('?'), C \== '[',
 	'$fx_glob_'(G, N).
 
 '$fx_glob_class'(G, C, Rest) :-

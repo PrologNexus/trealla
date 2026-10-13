@@ -5876,9 +5876,9 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 		is_func = last_op && is_interned(&p->v) && !specifier && !last_num && (*p->srcptr == '(');
 
-		// Under strict_iso an operator taken as an atom must stand alone, as an argument or between brackets
+		// Under strict_iso an operator taken as an atom, quoted or not, must stand alone, as an argument or between brackets
 
-		if (p->flags.strict_iso && op_priority && !priority && !is_func && !p->is_quoted) {
+		if (p->flags.strict_iso && op_priority && !priority && !is_func && !p->is_string) {
 			char *s = eat_space(p);
 			int nextch = s ? *s : 0;
 

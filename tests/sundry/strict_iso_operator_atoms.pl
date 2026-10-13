@@ -1,7 +1,7 @@
-% An operator taken as an atom must stand alone, as an argument or between
-% brackets: with strict_iso on, * = * and - = - 1 are syntax errors, as
-% in Scryer, while f(*), [:-,-] and (*)=(*) still read. Default mode is
-% unchanged.
+% An operator taken as an atom, quoted or not, must stand alone, as an
+% argument or between brackets: with strict_iso on, * = * and X = '*' are
+% syntax errors, as in Scryer, while f(*), [:-,-] and (*)=(*) still read.
+% Default mode is unchanged.
 
 :- initialization(main).
 
@@ -10,7 +10,9 @@ r(A, R) :-
 
 t :-
 	forall(member(A, ['f(*)', '[:-,-]', '(*)=(*)', '(a,(*))', '- (-)', 'X = (+)', 'maplist(=(1),[1])', '[-]',
-			'- = - 1', '(-;)', '(a, *)', 'f(* = a)', '* :- a', 'a = mod']),
+			'f(''*'')', '[a|''*'']', 'X = (''*'')', '''*''(1,2)',
+			'- = - 1', '(-;)', '(a, *)', 'f(* = a)', '* :- a', 'a = mod',
+			'X = ''*''', 'X = '',''', '''*'' = a', '(a, ''*'')']),
 		( r(A, R), write(A), write(' '), write(R), nl )).
 
 main :-

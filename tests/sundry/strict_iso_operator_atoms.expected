@@ -6,12 +6,20 @@ f(*) ok
 X = (+) ok
 maplist(=(1),[1]) ok
 [-] ok
+f('*') ok
+[a|'*'] ok
+X = ('*') ok
+'*'(1,2) ok
 - = - 1 ok
 (-;) ok
 (a, *) ok
 f(* = a) ok
 * :- a ok
 a = mod ok
+X = '*' ok
+X = ',' ok
+'*' = a ok
+(a, '*') ok
 f(*) ok
 [:-,-] ok
 (*)=(*) ok
@@ -20,9 +28,17 @@ f(*) ok
 X = (+) ok
 maplist(=(1),[1]) ok
 [-] ok
+f('*') ok
+[a|'*'] ok
+X = ('*') ok
+'*'(1,2) ok
 - = - 1 syntax_error
 (-;) syntax_error
 (a, *) syntax_error
 f(* = a) syntax_error
 * :- a syntax_error
 a = mod syntax_error
+X = '*' syntax_error
+X = ',' syntax_error
+'*' = a syntax_error
+(a, '*') syntax_error
