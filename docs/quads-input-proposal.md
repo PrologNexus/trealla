@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#350.**
+**Stage 3 — the suite. Implemented, s#1..s#382.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -222,8 +222,15 @@ when `'$VAR'` is a postfix operator (s#279, s#296).
 
 s#301..s#350 are in `tests/issues/test1099h.pl`. Trealla passes all 50
 without changes. How `writeq/1` names a variable is again left open
-(s#332), so a grammar describes it. The rest of that page remains to
-encode.
+(s#332), so a grammar describes it.
+
+s#351..s#382, the last rows, are in `tests/issues/test1099i.pl`. Trealla
+passes all 32 after one fix in the writer: with `ignore_ops(true)` a
+list is written as `'.'/2` terms, and the `.` and the elements were
+quoted even without `quoted(true)`, so `[' ']` came out as `'.'( ,[])`
+instead of `.( ,[])` (s#380). That completes the page: every row is
+encoded, under `strict_iso`, in `test1099.pl` and `test1099b.pl` to
+`test1099i.pl`.
 
 ## 5. Dependencies
 
