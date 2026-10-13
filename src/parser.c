@@ -3046,6 +3046,25 @@ static bool analyze(parser *p, pl_idx start_idx, bool last_op)
 	return !p->error;
 }
 
+// An argument, element or bracketed term has to reduce to one term, as a whole clause does
+
+static bool analyze_one(parser *p, pl_idx start_idx, bool last_op)
+{
+	if (!analyze(p, start_idx, last_op))
+		return false;
+
+	if ((start_idx < p->cl->cidx) && (p->cl->cells[start_idx].num_cells < (p->cl->cidx - start_idx))) {
+		if (!p->do_read_term)
+			fprintf(stderr, "Error: syntax error, operator expected, %s:%d\n", get_loaded(p->m, p->m->filename), p->line_num);
+
+		p->error_desc = "operator_expected";
+		p->error = true;
+		return false;
+	}
+
+	return true;
+}
+
 static bool term_expansion(parser *p);
 
 static bool term_expansion(parser *p)
@@ -5236,7 +5255,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			SB_cstr(p->token), ch, p->line_num, p->is_symbol, p->quote_char, p->v.tag, p->is_op, last_op, p->is_string);
 #endif
 
-		if (!p->quote_char
+		if (!p->quote_char && !p->is_quoted	// a quoted '.' is never the end token, operator or not
 			&& !SB_strcmp(p->token, ".")
 			&& (*p->srcptr != ',')
 			&& (*p->srcptr != '(')
@@ -5458,6 +5477,23 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			c = p->cl->cells + save_idx;
 			c->num_cells = p->cl->cidx - save_idx;
 			fix_list(c);
+
+			// Each element has to reduce to one term, or what is left over is taken for the tail
+
+			const cell *tail = c;
+
+			while (is_iso_list(tail))
+				tail = tail + 1 + (tail + 1)->num_cells;
+
+			if ((tail + tail->num_cells) != (p->cl->cells + p->cl->cidx)) {
+				if (!p->do_read_term)
+					fprintf(stderr, "Error: syntax error, operator expected, %s:%d\n", get_loaded(p->m, p->m->filename), p->line_num);
+
+				p->error_desc = "operator_expected";
+				p->error = true;
+				break;
+			}
+
 			last_num = false;
 			continue;
 		}
@@ -5634,7 +5670,9 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 				break;
 			}
 
-			analyze(p, arg_idx, last_op);
+			if (!(is_consing ? analyze(p, arg_idx, last_op) : analyze_one(p, arg_idx, last_op)))
+				break;
+
 			arg_idx = p->cl->cidx;
 
 			if (*p->srcptr == ',') {
@@ -5726,7 +5764,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			p->last_close = true;
 			p->last_empty_arglist = (arg_idx == p->cl->cidx);
 			p->nesting_parens--;
-			analyze(p, arg_idx, last_op=false);
+			analyze_one(p, arg_idx, last_op=false);
 			return arity;
 		}
 
@@ -5776,7 +5814,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 			p->last_close = true;
 			p->nesting_braces--;
-			analyze(p, arg_idx, last_op=false);
+			analyze_one(p, arg_idx, last_op=false);
 			return arity;
 		}
 

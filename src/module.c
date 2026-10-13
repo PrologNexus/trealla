@@ -1958,9 +1958,16 @@ static void import_ops(module *m, module *used)
 	}
 }
 
-// One class of operator, infix or not, in one module's tables.
+// One class of operator, infix, prefix or postfix, in one module's tables.
 
-static unsigned search_op_internal(const module *m, const char *name, unsigned *specifier, bool infix, op_mode mode)
+enum { OP_CLASS_INFIX, OP_CLASS_PREFIX, OP_CLASS_POSTFIX };
+
+static bool op_in_class(unsigned specifier, int cls)
+{
+	return cls == OP_CLASS_INFIX ? IS_INFIX(specifier) : cls == OP_CLASS_PREFIX ? IS_PREFIX(specifier) : IS_POSTFIX(specifier);
+}
+
+static unsigned search_op_internal(const module *m, const char *name, unsigned *specifier, int cls, op_mode mode)
 {
 	for (unsigned k = 0; k < 2; k++) {
 		sliter *iter = sl_find_key(k ? m->ops : m->defops, name);
@@ -1970,7 +1977,7 @@ static unsigned search_op_internal(const module *m, const char *name, unsigned *
 			if (!ptr->priority || !op_visible(ptr, mode, !k))
 				continue;
 
-			if ((IS_INFIX(ptr->specifier) ? true : false) != infix)
+			if (!op_in_class(ptr->specifier, cls))
 				continue;
 
 			if (specifier) *specifier = ptr->specifier;
@@ -1992,21 +1999,26 @@ unsigned search_op(module *m, const char *name, unsigned *specifier, bool prefer
 		return 0;
 	}
 
-	// The preferred class across every table before the other, so a prefix
-	// op of the module's own, say, doesn't hide the standard infix one.
+	// The preferred class across every table before the others, so a prefix
+	// op of the module's own, say, doesn't hide the standard infix one. Where
+	// an operand is expected a prefix op comes first, and after one an infix
+	// then a postfix op, so a name that is both prefix and postfix is read
+	// as whichever fits.
 
 	module *user_m = m->pl->user_m;
 	bool inherit = user_m && (m != user_m);
+	static const int unifix_order[] = { OP_CLASS_PREFIX, OP_CLASS_POSTFIX, OP_CLASS_INFIX };
+	static const int infix_order[] = { OP_CLASS_INFIX, OP_CLASS_POSTFIX, OP_CLASS_PREFIX };
 
-	for (unsigned pass = 0; pass < 2; pass++) {
-		bool infix = prefer_unifix ? pass : !pass;
+	for (unsigned pass = 0; pass < 3; pass++) {
+		int cls = prefer_unifix ? unifix_order[pass] : infix_order[pass];
 		unsigned priority;
 
 		if (!inherit)
-			priority = search_op_internal(m, name, specifier, infix, OPS_ALL);
-		else if (!(priority = search_op_internal(m, name, specifier, infix, OPS_CHANGED))
-			&& !(user_m->user_ops && (priority = search_op_internal(user_m, name, specifier, infix, OPS_CHANGED))))
-			priority = search_op_internal(m, name, specifier, infix, OPS_DEFAULTS);
+			priority = search_op_internal(m, name, specifier, cls, OPS_ALL);
+		else if (!(priority = search_op_internal(m, name, specifier, cls, OPS_CHANGED))
+			&& !(user_m->user_ops && (priority = search_op_internal(user_m, name, specifier, cls, OPS_CHANGED))))
+			priority = search_op_internal(m, name, specifier, cls, OPS_DEFAULTS);
 
 		if (priority)
 			return priority;
