@@ -158,7 +158,7 @@ static thread *main_thread(prolog *pl)
 // The Prolog thread this OS thread runs, for code with no query to ask,
 // such as assert_begin() resolving a thread_local/1 predicate.
 
-static _Thread_local thread *g_self_thread;
+static pl_thread_local thread *g_self_thread;
 
 // The interrupted goal again, once the engine has run the thread_signal/2
 // that interrupted it: as SWI does, a signal that throws abandons the

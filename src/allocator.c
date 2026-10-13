@@ -140,7 +140,7 @@ static unsigned s_next_stripe;
 
 static unsigned my_stripe(void)
 {
-	static _Thread_local unsigned mine;			// 0 = not yet picked
+	static pl_thread_local unsigned mine;			// 0 = not yet picked
 
 	if (!mine)
 		mine = (__atomic_fetch_add(&s_next_stripe, 1, __ATOMIC_RELAXED) % ALLOC_STRIPES) + 1;
