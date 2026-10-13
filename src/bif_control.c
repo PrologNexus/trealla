@@ -93,20 +93,26 @@ bool call_check(query *q, cell *p1, bool *status, bool calln)
 	cell *save_p1 = p1;
 
 	if (calln || !get_arity(p1)) {
+		// A goal built at run time is looked up on every call, so the lookups that found something are kept
+
+		unsigned gen = q->pl->pred_gen, arity = get_arity(p1);
+		lookup_entry *e = is_interned(p1) ? &q->lookup_cache[(p1->val_off + arity) % LOOKUP_CACHE_SIZE] : NULL;
 		bool found = false;
 
-		if ((p1->match = search_predicate(q->st.m, p1)) != NULL) {
+		if (e && (e->m == q->st.m) && (e->val_off == p1->val_off) && (e->arity == arity) && (e->gen == gen)) {
+			if (e->is_builtin) {
+				p1->bif_ptr = e->bif_ptr;
+				p1->flags |= FLAG_INTERNED_BUILTIN;
+			} else {
+				p1->match = e->match;
+				p1->flags &= ~FLAG_INTERNED_BUILTIN;
+			}
+		} else if ((p1->match = search_predicate(q->st.m, p1)) != NULL) {
 			p1->flags &= ~FLAG_INTERNED_BUILTIN;
+			if (e) *e = (lookup_entry){ .m = q->st.m, .match = p1->match, .gen = gen, .arity = arity, .val_off = p1->val_off };
 		} else if ((p1->bif_ptr = get_builtin_term(q->st.m, p1, &found, NULL)), found) {
 			p1->flags |= FLAG_INTERNED_BUILTIN;
-
-			if (calln && (get_arity(p1) <= 2)) {
-				const char *functor = C_STR(q, p1);
-				unsigned specifier;
-
-				if (search_op(q->st.m, functor, &specifier, false))
-					SET_OP(p1, specifier);
-			}
+			if (e) *e = (lookup_entry){ .m = q->st.m, .bif_ptr = p1->bif_ptr, .gen = gen, .arity = arity, .val_off = p1->val_off, .is_builtin = true };
 		} else {
 			p1->flags &= ~FLAG_INTERNED_BUILTIN;
 		}

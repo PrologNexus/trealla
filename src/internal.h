@@ -988,6 +988,17 @@ typedef struct {
 	uint32_t gen, val;
 } vgen_entry;
 
+// A goal call_check() resolved at run time, valid while pl->pred_gen is unchanged.
+#define LOOKUP_CACHE_SIZE 32
+
+typedef struct {
+	module *m;
+	union { predicate *match; builtins *bif_ptr; };
+	unsigned gen, arity;
+	pl_idx val_off;
+	bool is_builtin;
+} lookup_entry;
+
 struct query_ {
 	lnode hdr;							// must be first
 	query *prev, *next, *parent;
@@ -1172,6 +1183,7 @@ struct query_ {
 	bool waiting_io:1;
 	bool did_unhandled_exception:1;
 	bool unify_too_deep:1;				// recursion hit MAX_UNIFY_DEPTH; unify() turns it into an error
+	lookup_entry lookup_cache[LOOKUP_CACHE_SIZE];
 };
 
 // What the parser records about one variable it has seen. These were six
@@ -1328,6 +1340,7 @@ struct prolog_ {
 	unsigned tbl_max_answer_size, tbl_max_subgoal_size, tbl_max_answers_for_subgoal;
 	unsigned current_input, current_output, current_error;
 	pl_atomic int goal_expansions;		// every thread bumps it; plain ++/-- wrapped below zero
+	pl_atomic unsigned pred_gen;		// bumped when a module gains or loses a predicate
 	int8_t halt_code, opt, limit;
 	pl_refcnt rnd_first_time;
 	bool def_quoted:1;

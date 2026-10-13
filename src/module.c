@@ -332,7 +332,7 @@ predicate *search_predicate(module *m, cell *c)
 	if (pr)
 		return pr;
 
-	if (m->pl->user_m) {
+	if (m->pl->user_m && (m != m->pl->user_m)) {
 		pr = find_predicate(m->pl->user_m, c);
 
 		if (pr)
@@ -443,6 +443,7 @@ predicate *create_predicate(module *m, cell *c, bool *created)
 	set_arity(&pr->key, get_arity(c));
 	pr->is_noindex = m->pl->noindex || !get_arity(&pr->key);
 	sl_app(m->index, &pr->key, pr);
+	m->pl->pred_gen++;
 	return pr;
 }
 
@@ -475,6 +476,7 @@ static void abolish_predicate(predicate *pr)
 static void destroy_predicate(module *m, predicate *pr)
 {
 	sl_del(m->index, &pr->key);
+	m->pl->pred_gen++;
 
 	while (pr->head) {
 		rule *tmp = pr->head;
@@ -3222,8 +3224,10 @@ static bool unload_realfile(module *m, const char *filename)
 
 		if (!pr->refcnt)
 			abolish_predicate(pr);
-		else
+		else {
 			pr->is_abolished = true;
+			m->pl->pred_gen++;
+		}
 
 		pr = list_next(pr);
 	}
@@ -3795,6 +3799,7 @@ void module_bury_predicates(module *m)
 	while ((pr = list_pop_front(&m->predicates)) != NULL) {
 		sl_rem(m->index, &pr->key, pr);
 		pr->is_abolished = true;
+		m->pl->pred_gen++;
 		pr->filename = NULL;			// m->filename goes when m is reused
 		list_push_back(&m->buried, pr);
 	}

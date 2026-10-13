@@ -363,8 +363,10 @@ static bool bif_sys_destroy_module_1(query *q)
 	for (predicate *pr = list_front(&m->predicates); pr; pr = list_next(pr)) {
 		if (pr->head || pr->cnt)
 			abolish_predicate(q, pr, true);
-		else
+		else {
 			pr->is_abolished = true;
+			q->pl->pred_gen++;
+		}
 	}
 
 	module_clear_tables(m);
@@ -618,8 +620,10 @@ static void abolish_predicate(query *q, predicate *pr, bool hard)
 	pr->head = pr->tail = NULL;
 	pr->cnt = 0;
 
-	if (hard)
+	if (hard) {
 		pr->is_abolished = true;
+		q->pl->pred_gen++;
+	}
 
 }
 

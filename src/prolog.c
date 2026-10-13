@@ -596,8 +596,23 @@ builtins *get_help(prolog *pl, const char *name, unsigned arity, bool *found, bo
 
 builtins *get_builtin_by_atom(prolog *pl, pl_idx off, unsigned arity, bool *found, bool *evaluable)
 {
-	sliter *iter = sl_find_key(pl->biftab, (void*)(size_t)off);
 	builtins *ptr;
+
+	// Most names have one arity, and sl_get() takes no iterator lock
+
+	if (!sl_get(pl->biftab, (void*)(size_t)off, (const void**)&ptr)) {
+		if (found) *found = false;
+		if (evaluable) *evaluable = false;
+		return NULL;
+	}
+
+	if (ptr->arity == arity) {
+		if (found) *found = true;
+		if (evaluable) *evaluable = ptr->evaluable;
+		return ptr;
+	}
+
+	sliter *iter = sl_find_key(pl->biftab, (void*)(size_t)off);
 
 	while (sl_next_key(iter, (void**)&ptr)) {
 		if (ptr->arity == arity) {
