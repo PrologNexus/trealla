@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#150, s#270, s#271.**
+**Stage 3 — the suite. Implemented for s#1..s#200, s#270, s#271.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -187,8 +187,21 @@ a prefix operator, so after `op(0,fy,-)` even `integer(-1)` failed to
 read (s#64); `writeq/1` wrote `yf(fy(1))` as `fy 1 yf`, which reads back
 as `fy(yf(1))` (s#150); and in strict mode a back quoted string
 (s#111..s#113) and `0''` before anything but a quote (s#117) are syntax
-errors, while by default they still read as an atom and as 39. The rest
-of that page remains to encode.
+errors, while by default they still read as an atom and as 39.
+
+s#151..s#200 are in `tests/issues/test1099e.pl`. Trealla passes all 50
+after five fixes, three in the writer and two in the reader. `writeq/1`
+now brackets an `fy` term as the left operand of an infix operator of the
+same priority, `(fy 1) yfx 2` (s#153), an operand whose own operator could
+take a postfix one into its right side, `(1 xfy 2)yf` (s#156), and an
+operator atom as the operand of a postfix one, `('.')'.'` (s#169). A name
+that is both prefix and postfix is now read as the one that fits, so `0 f
+f` is `f(f(0))` (s#160), and tokens left over in an argument, list element
+or `{}` term are a syntax error instead of being dropped or taken for the
+next argument or the tail, so `1 p p p 2` with `p` both `fy` and `yfx` is
+an error inside `write_canonical/1` as it is at the top (s#162). A quoted
+`'.'` right before the end token was taken for it. The rest of that page
+remains to encode.
 
 ## 5. Dependencies
 
