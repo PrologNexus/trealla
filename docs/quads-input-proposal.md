@@ -151,7 +151,7 @@ described, since the query is run once against one input and a second
 answer would need a second stream. Multi-answer input quads are not
 rejected outright, but they will not pass.
 
-**Stage 3 — the suite. Implemented for s#1..s#100, s#270, s#271.**
+**Stage 3 — the suite. Implemented for s#1..s#150, s#270, s#271.**
 
 Encoded in `tests/issues/test1099.pl`, against the row numbering on
 UWN's [syntax conformity
@@ -173,10 +173,22 @@ got, which the standard leaves open.
 
 s#51..s#100 are in `tests/issues/test1099c.pl`, the same way. Trealla
 passes all 50 after one more fix: in strict mode an operator taken as
-an atom must stand alone, as an argument, a list element or between
-brackets, so `- = - .` and `write_canonical((-;))` are syntax errors,
-as in Scryer (s#76..s#78, s#86..s#89). By default they still read. The
-rest of that page remains to encode.
+an atom, quoted or not, must stand alone, as an argument, a list element
+or between brackets, so `- = - .` and `write_canonical((-;))` are syntax
+errors, as in Scryer (s#76..s#78, s#86..s#89). By default they still
+read.
+
+s#101..s#150 are in `tests/issues/test1099d.pl`. A row starting `/**/`
+stands for the last row before it without one followed by its own text,
+so such rows run with that row's operators set up, as s#64, s#73 and
+s#74 in `test1099c.pl` now do too. Trealla passes all 50 after four
+fixes: a `-` before a numeral made a negative number only while `-` was
+a prefix operator, so after `op(0,fy,-)` even `integer(-1)` failed to
+read (s#64); `writeq/1` wrote `yf(fy(1))` as `fy 1 yf`, which reads back
+as `fy(yf(1))` (s#150); and in strict mode a back quoted string
+(s#111..s#113) and `0''` before anything but a quote (s#117) are syntax
+errors, while by default they still read as an atom and as 39. The rest
+of that page remains to encode.
 
 ## 5. Dependencies
 

@@ -4132,7 +4132,7 @@ static bool parse_number(parser *p, const char **srcptr, bool neg)
 		} else if ((*s == '\'') && s[1] == '\'') {
 			s++;
 			v = *s++;
-		} else if ((*s == '\'') && p->flags.strict_iso && search_op(p->m, "", NULL, false)) {
+		} else if ((*s == '\'') && p->flags.strict_iso) {	// 0'' before anything but a quote is no character literal in ISO
 			if (!p->do_read_term)
 				fprintf(stderr, "Error: syntax error, parsing number, %s:%d\n", get_loaded(p->m, p->m->filename), p->line_num);
 
@@ -4687,6 +4687,18 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 	p->last_neg = false;
 
 	// Quoted...
+
+	// A back quoted string is no term in ISO, so strict ISO refuses it
+
+	if ((*src == '`') && p->flags.strict_iso) {
+		if (!p->do_read_term)
+			fprintf(stderr, "Error: syntax error, back quoted string, %s:%d\n", get_loaded(p->m, p->m->filename), p->line_num);
+
+		p->error_desc = "back_quoted_string";
+		p->error = true;
+		p->srcptr = (char*)src + 1;
+		return false;
+	}
 
 	if ((*src == '"') || (*src == '`') || (*src == '\'')) {
 		p->quote_char = *src++;
