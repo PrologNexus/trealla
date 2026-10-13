@@ -1096,7 +1096,8 @@ static bool bif_thread_get_message_3(query *q)
 	PROLOG_LIST_HANDLER(p3);
 	cell *p3_orig = p3;
 	pl_ctx p3_orig_ctx = p3_ctx;
-	double timeout = -1.0;
+	double timeout = -1.0, deadline = 0.0;
+	bool has_deadline = false;
 
 	while (is_iso_list(p3)) {
 		cell *h = PROLOG_LIST_HEAD(p3);
@@ -1118,6 +1119,17 @@ static bool bif_thread_get_message_3(query *q)
 			}
 
 			timeout = is_float(c1) ? get_float(c1) : get_smallint(c1);
+		} else if (!CMP_STRING_TO_CSTR(q, h, "deadline")) {
+			cell *c1 = deref(q, FIRST_ARG(h), h_ctx);
+			pl_ctx c1_ctx = q->latest_ctx;
+
+			if (!is_number(c1)) {
+				throw_error(q, c1, h_ctx, "type_error", "read_option");
+				return false;
+			}
+
+			deadline = is_float(c1) ? get_float(c1) : get_smallint(c1);
+			has_deadline = true;
 		} else {
 			throw_error(q, h, h_ctx, "domain_error", "read_option");
 			return false;
@@ -1135,6 +1147,18 @@ static bool bif_thread_get_message_3(query *q)
 
 	if (!is_nil(p3)) {
 		return throw_error(q, p3_orig, p3_orig_ctx, "type_error", "list");
+	}
+
+	// As in SWI, deadline(T) is on get_time/1's clock, and the earlier of it and a timeout wins.
+
+	if (has_deadline) {
+		double left = deadline - (wall_time_in_usec() / 1000000.0);
+
+		if (left < 0.0)
+			left = 0.0;
+
+		if ((timeout < 0.0) || (left < timeout))
+			timeout = left;
 	}
 
 	bool ok = do_match_message(q, n, false, timeout);

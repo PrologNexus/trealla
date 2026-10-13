@@ -1,0 +1,7 @@
+expired
+timed_out
+waited_until_deadline
+timeout_earlier
+deadline_earlier
+selected
+type_error(read_option,foo)

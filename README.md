@@ -2221,7 +2221,9 @@ These are non-standard but *SWI-Prolog* compatible:
 	thread_join/1				# thread_join(+thread)
 	thread_get_message/3		# thread_get_message(+queue,?term,+opts)
 
-Where 'opts' can be *timeout(+float)* to specify a timeout in seconds.
+Where 'opts' can be *timeout(+float)* to specify a timeout in seconds,
+or *deadline(+float)* to give up at that time on *get_time/1*'s clock.
+With both, the earlier wins.
 
 Create a stand-alone message queue.
 Note: a queue is also a mutex.
