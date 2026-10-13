@@ -1664,6 +1664,26 @@ static bool print_canonical_compound(query *q, cell *c, pl_ctx c_ctx, bool runni
 	return true;
 }
 
+// Whether an operator term is written starting with a non-negative number, which a - before it would negate
+
+static bool starts_with_number(query *q, cell *c, pl_ctx c_ctx, bool running)
+{
+	for (;;) {
+		if (is_number(c))
+			return !is_negative(c);
+
+		unsigned arity = get_arity(c), spec = 0;
+
+		if (!is_interned(c) || !arity || !match_op(q->st.m, C_STR(q, c), &spec, arity))
+			return false;
+
+		if (!((arity == 2) && IS_INFIX(spec)) && !((arity == 1) && IS_POSTFIX(spec)))
+			return false;
+
+		c = deref_if(q, running, c + 1, &c_ctx);
+	}
+}
+
 static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsigned depth, visit *visited,
 	const char *src, size_t src_len, unsigned my_specifier, unsigned my_priority)
 {
@@ -1779,7 +1799,7 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 		if ((rhs_pri > 0) && !get_arity(rhs)) parens = true;
 		//if (my_priority && (rhs_pri == my_priority) && strcmp(src, "-") && strcmp(src, "+")) parens = true;
 		if (!strcmp(src, "-") && (rhs_pri == my_priority) && (get_arity(rhs) > 1)) parens = true;
-		if ((c->val_off == g_minus_s) && is_number(rhs) && !is_negative(rhs)) parens = true;
+		if ((c->val_off == g_minus_s) && starts_with_number(q, rhs, rhs_ctx, running)) parens = true;
 		if ((c->val_off == g_minus_s) && match_op(q->st.m, C_STR(q, rhs), NULL, true) && !get_arity(rhs)) parens = true;
 		if ((c->val_off == g_plus_s) && match_op(q->st.m, C_STR(q, rhs), NULL, true) && !get_arity(rhs)) parens = true;
 
