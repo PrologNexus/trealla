@@ -4,7 +4,9 @@
 % Stage 3 of #1099, continued: s#51..s#100 of UWN's ISO syntax conformity
 % suite, as test1099b.pl does s#5..s#50: read by read/1 from inputs/1 in
 % strict_iso mode, a syntax error described with how far the reader got.
-% Operators a row changes are put back afterwards.
+% Operators a row changes are put back afterwards. A row starting /**/
+% stands for the last row before it without one followed by its own
+% text, so the operators that row sets up are set up here around it.
 
 % s#51..s#55: exponents and operators named e
 
@@ -53,7 +55,7 @@
 ?- setup_call_cleanup(true, (read(G_0), G_0), op(200,fy,-)).
    inputs("op(0,fy,-)."), peeks("\n"), G_0 = op(0,fy,-).
 
-?- read(G_0), G_0.
+?- setup_call_cleanup(op(0,fy,-), (read(G_0), G_0), op(200,fy,-)).
    inputs("/**/ integer(- 1)."), peeks("\n"), G_0 = integer(-1).
 
 % s#65..s#67: +1 is a compound (Cor.2), and a syntax error once + is no
@@ -87,10 +89,12 @@
 ?- setup_call_cleanup(true, (read(G_0), G_0), op(1105,xfy,'|')).
    inputs("op(0,xfy,'|'), op(999,xfy,'|')."), peeks("\n"), permission_error(create,operator,'|').
 
-?- read(G_0), G_0.
+% s#73, s#74: s#72 has taken | away as an operator before it fails
+
+?- setup_call_cleanup(op(0,xfy,'|'), (read(G_0), G_0), op(1105,xfy,'|')).
    inputs("/**/ X=[a|b]."), peeks("\n"), G_0 = ([a|b] = [a|b]).
 
-?- read(G_0), G_0.
+?- setup_call_cleanup(op(0,xfy,'|'), (read(G_0), G_0), op(1105,xfy,'|')).
    inputs("/**/ X=[a|b|c]."), peeks("\n"), syntax_error(...).
 
 % s#75..s#78: an operator as an operand needs brackets

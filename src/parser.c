@@ -5815,6 +5815,15 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 		const int op_priority = priority;
 
+		// A - before a numeral negates it, whether or not - is a prefix operator
+
+		bool neg_numeral = false;
+
+		if (p->last_neg && !p->is_string && !SB_strcmp(p->token, "-")) {
+			char *s = eat_space(p);
+			neg_numeral = s && isdigit((unsigned char)*s);
+		}
+
 		if (!SB_strcmp(p->token, "!") &&
 			((*p->srcptr == ')') || (*p->srcptr == ';') || (*p->srcptr == ',') || (*p->srcptr == '.')))
 			p->quote_char = 1;
@@ -5878,7 +5887,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 
 		// Under strict_iso an operator taken as an atom, quoted or not, must stand alone, as an argument or between brackets
 
-		if (p->flags.strict_iso && op_priority && !priority && !is_func && !p->is_string) {
+		if (p->flags.strict_iso && op_priority && !priority && !is_func && !p->is_string && !neg_numeral) {
 			char *s = eat_space(p);
 			int nextch = s ? *s : 0;
 
@@ -5943,7 +5952,7 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			break;
 		}
 
-		last_op = SB_strcmp(p->token, ")") && priority;
+		last_op = (SB_strcmp(p->token, ")") && priority) || neg_numeral;
 		last_postfix = IS_POSTFIX(specifier);
 		last_prefix = last_op && IS_PREFIX(specifier);
 		this_operator = priority;

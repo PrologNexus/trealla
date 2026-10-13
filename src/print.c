@@ -1692,6 +1692,9 @@ static bool print_operator(query *q, cell *c, pl_ctx c_ctx, bool running, unsign
 		if (iswalpha(ch)) space = true;
 		if (lhs_pri > my_priority) { parens = true; space = false; }
 
+		// A prefix operator would take the postfix one into its operand, so fy 1 yf reads back as fy(yf(1))
+		if ((get_arity(lhs) == 1) && IS_PREFIX(lhs_specifier)) { parens = true; space = false; }
+
 		if (!is_var(lhs) && q->max_depth && ((depth+1) >= q->max_depth)) {
 			if (q->last_thing != WAS_SPACE) emit(q, " ");
 			emit(q, "...");
