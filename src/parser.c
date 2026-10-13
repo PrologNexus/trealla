@@ -4132,7 +4132,7 @@ static bool parse_number(parser *p, const char **srcptr, bool neg)
 		} else if ((*s == '\'') && s[1] == '\'') {
 			s++;
 			v = *s++;
-		} else if ((*s == '\'') && p->flags.strict_iso) {	// 0'' before anything but a quote is no character literal in ISO
+		} else if (*s == '\'') {	// 0'' before anything but a quote is no character literal (#766, #798)
 			if (!p->do_read_term)
 				fprintf(stderr, "Error: syntax error, parsing number, %s:%d\n", get_loaded(p->m, p->m->filename), p->line_num);
 

@@ -1,5 +1,5 @@
 X = `a` =(A,a)
-integer(0'') integer(39)
+integer(0'') syntax_error
 integer(0''') integer(39)
 X = - 1 =(A,-1)
 X = [-1, - 2.5] =(A,'.'(-1,'.'(-2.5,[])))

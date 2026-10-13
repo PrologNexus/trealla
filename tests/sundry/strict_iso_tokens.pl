@@ -1,7 +1,7 @@
-% A back quoted string and 0'' before anything but a quote are extensions
-% Trealla reads by default, so with strict_iso on they are syntax errors.
-% A - before a numeral negates it in both modes, even once - is no longer
-% a prefix operator.
+% A back quoted string is an extension Trealla reads by default, so with
+% strict_iso on it is a syntax error. 0'' before anything but a quote is
+% one in both modes, as #766 and #798 have it. A - before a numeral
+% negates it in both modes, even once - is no longer a prefix operator.
 
 :- initialization(main).
 
