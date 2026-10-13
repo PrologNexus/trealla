@@ -1,5 +1,6 @@
 pipe_read_thrown: exception(stop)
 signal_ran
+signal_ran_again
 read foo
 joined(true)
 at_exit_ran

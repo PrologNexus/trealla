@@ -1,6 +1,6 @@
 % thread_signal/2 and thread_cancel/1 reach a thread blocked in a read on
 % a pipe or in accept, as in SWI: SIGUSR2 interrupts the read, the signal
-% runs, and the goal carries on if it didn't throw.
+% runs, and the goal carries on if it didn't throw, however many signals come.
 
 :- use_module(library(sockets)).
 :- initialization(main).
@@ -15,7 +15,8 @@ main :-
 	sleep(0.3), thread_signal(T1, throw(stop)), sleep(0.5), st(T1, pipe_read_thrown),
 	popen('sleep 1; echo foo.', read, P2, []),
 	thread_create((read(P2, X), format("read ~q~n", [X])), T2, []),
-	sleep(0.3), thread_signal(T2, writeln(signal_ran)), thread_join(T2, S2), writeq(joined(S2)), nl,
+	sleep(0.3), thread_signal(T2, writeln(signal_ran)),
+	sleep(0.3), thread_signal(T2, writeln(signal_ran_again)), thread_join(T2, S2), writeq(joined(S2)), nl,
 	popen('sleep 5', read, P3, []),
 	thread_create(read(P3, _), T3, [at_exit(writeln(at_exit_ran))]),
 	sleep(0.3), thread_cancel(T3), sleep(0.5), st(T3, pipe_read_cancelled),

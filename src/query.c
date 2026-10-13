@@ -2258,13 +2258,19 @@ static void proceed(query *q)
 	if (!is_end(q->st.instr))
 		return;
 
-	if (q->st.instr->ret_instr) {
+	if (!q->st.instr->ret_instr) {
+		q->st.instr = NULL;
+		return;
+	}
+
+	// A goal requeued last in a heap-built call (a signal retry) returns to that call's own end: follow the chain.
+
+	do {
 		frame *f = GET_CURR_FRAME();
 		f->chgen = q->st.instr->chgen;
 		q->st.m = module_by_id(q->pl, q->st.instr->mid);
-	}
-
-	q->st.instr = q->st.instr->ret_instr;
+		q->st.instr = q->st.instr->ret_instr;
+	} while (is_end(q->st.instr) && q->st.instr->ret_instr);
 }
 
 static bool can_view(query *q, uint64_t dbgen, const rule *r)
