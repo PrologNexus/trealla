@@ -27,6 +27,6 @@ main :-
 		member(T, [t_clause, t_retract_all, t_retract_cut, t_retractall, t_bound_module, t_retract_rule, t_clause_ref, t_caller_module, t_missing]),
 		(	G =.. [T, R],
 			(	catch(G, E, R = uncaught(E)) -> true ; R = failed ),
-			format("~w: ~q~n", [T, R])
+			\+ \+ ( numbervars(R, 0, _), format("~w: ~q~n", [T, R]) )
 		)
 	).

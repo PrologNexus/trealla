@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "module.h"
 #include "parser.h"
@@ -49,6 +50,17 @@ static void set_block_length(cell *start, const cell *end)
 }
 
 static void compile_term(predicate *pr, clause *cl, cell **dst, cell **src);
+
+// Whether a goal's predicate is lists:member/2, itself or through the alias an import makes
+
+static bool is_lists_member(const predicate *pr)
+{
+	if (pr && pr->alias)
+		pr = pr->alias;
+
+	return pr && pr->m && !strcmp(pr->m->name, "lists")
+		&& (pr->key.val_off == g_member_s) && (get_arity(&pr->key) == 2);
+}
 
 // The eager callability check of issue #1110 clones the body at run time to keep a cyclic term safe, so
 // emit it only where the body could fail the check: a variable leaf, or one that is not callable at all.
@@ -526,6 +538,21 @@ static void compile_term(predicate *pr, clause *cl, cell **dst, cell **src)
 		copy_term(dst, src);										// Arg2
 		make_instr((*dst)++, g_sys_module_s, bif_sys_module_1, 1, 1);
 		make_var((*dst)++, g_anon_s, var_num1);
+		return;
+	}
+
+	// member(X, L) that resolves to lists:member/2 runs as '$member'(X, L, V), V a hidden variable for its place in L
+
+
+	if (((*src)->val_off == g_member_s) && (get_arity(*src) == 2) && is_lists_member((*src)->match)) {
+		unsigned var_num = cl->num_vars++;
+		*src += 1;
+		cell *save_dst = *dst;
+		make_instr((*dst)++, g_sys_member_s, bif_sys_member_3, 3, 0);
+		copy_term(dst, src);										// X
+		copy_term(dst, src);										// L
+		make_var((*dst)++, g_anon_s, var_num);
+		save_dst->num_cells = *dst - save_dst;
 		return;
 	}
 

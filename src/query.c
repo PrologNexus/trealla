@@ -259,6 +259,22 @@ static void trace_call(query *q, cell *c, pl_ctx c_ctx, box_t box)
 	if (box == CALL)
 		box = q->retry?REDO:CALL;
 
+	// '$member'(X, L, V) is member(X, L) to whoever is tracing: print its cells without the hidden V
+
+	cell *as_member = NULL;
+
+	if ((c->val_off == g_sys_member_s) && (get_arity(c) == 3)) {
+		pl_idx n = c->num_cells - 1;
+
+		if ((as_member = TPL_malloc(sizeof(cell)*n)) != NULL) {
+			memcpy(as_member, c, sizeof(cell)*n);
+			as_member->val_off = g_member_s;
+			set_arity(as_member, 2);
+			as_member->num_cells = n;
+			c = as_member;
+		}
+	}
+
 	const char *src = C_STR(q, c);
 	frame *f = GET_CURR_FRAME();
 	q->step++;
@@ -285,6 +301,7 @@ static void trace_call(query *q, cell *c, pl_ctx c_ctx, box_t box)
 	q->quoted = true;
 	q->double_quotes = true;
 	char *dst = print_term_to_strbuf(q, c, c_ctx, -1);
+	TPL_free(as_member);
 	SB_strcat(pr, dst);
 	TPL_free(dst);
 	q->quoted = false;

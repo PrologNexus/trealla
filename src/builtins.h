@@ -568,6 +568,7 @@ bool bif_sys_get_level_1(query *q);
 bool bif_sys_set_if_var_2(query *q);
 bool bif_sys_jump_1(query *q);
 bool bif_sys_jump_if_nil_2(query *q);
+bool bif_sys_member_3(query *q);
 bool bif_sys_cut_1(query *q);
 bool bif_parse_csv_file_2(query *q);
 bool bif_parse_csv_line_3(query *q);

@@ -21,9 +21,10 @@ the file, not just the search.
 | GNU Prolog | 1.6.0 (git 5976ac5) | 1.61s | none | `LOCALSZ=200000` (or larger) |
 | GNU Prolog | 1.5.0 (Homebrew) | 1.69s | none | `LOCALSZ=1000000 GLOBALSZ=1000000` |
 | SWI-Prolog | 10.1.16 | 1.99s | none | none |
+| Trealla | 3.13.6, compiled `member/2` | 2.36s | none | none |
 | Scryer | 0.10.0 (git 7dad74d) | 2.53s | none | none |
-| Trealla | 3.11.8 | 3.67s | none | none |
 | CxProlog | 0.98.5 | 3.68s | DCG pre-expanded, `member/2` added, `use_module` removed | none |
+| Trealla | 3.13.5, original `member/2` | 3.72s | none | none |
 
 ## Commands and what each system needed
 

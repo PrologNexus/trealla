@@ -1256,6 +1256,83 @@ bool bif_sys_jump_1(query *q)
 	return true;
 }
 
+// member/2 as compile.c emits it, '$member'(X, L, V). V is a hidden variable whose slot holds the rest of the
+// list between retries: it is written without trailing, so backtracking to this choicepoint leaves it be. A list
+// cell is kept by pointer, being on the heap or in a clause, and a string's tail, made in a temporary, by value.
+
+static void member_save(query *q, slot *e, cell *t, pl_ctx t_ctx)
+{
+	unshare_cell(&e->c);
+
+	if (is_var(t)) {
+		make_ref(&e->c, t->var_num, t_ctx);
+	} else if (is_string(t) || !is_compound(t)) {
+		e->c = *t;
+		share_cell(t);
+	} else
+		make_indirect(&e->c, t, t_ctx);
+}
+
+// An unbound tail is the Prolog definition's to extend: call member(X, Tail) in the rest's place.
+
+static bool member_rest(query *q, cell *p1, pl_ctx p1_ctx, cell *t, pl_ctx t_ctx)
+{
+	cell goal;
+	make_instr(&goal, g_member_s, NULL, 2, 0);
+	cell *tmp = prepare_call(q, CALL_NOSKIP, &goal, q->st.cur_ctx, p1->num_cells + t->num_cells + 2);
+	CHECKED(tmp);
+	pl_idx num_cells = 1;
+	num_cells += dup_cells_by_ref(tmp+num_cells, p1, p1_ctx, p1->num_cells);
+	num_cells += dup_cells_by_ref(tmp+num_cells, t, t_ctx, t->num_cells);
+	tmp->num_cells = num_cells;
+	make_call(q, tmp+num_cells);
+	q->st.instr = tmp;
+	return true;
+}
+
+bool bif_sys_member_3(query *q)
+{
+	GET_FIRST_ARG(p1,any);
+	GET_NEXT_ARG(p2,any);
+	GET_NEXT_RAW_ARG(p3,var);
+	slot *e = get_slot(q, GET_FRAME(is_ref(p3) ? p3->val_ctx : p3_ctx), p3->var_num);
+	cell *l = p2;
+	pl_ctx l_ctx = p2_ctx;
+
+	if (q->retry) {
+		if (is_indirect(&e->c)) {
+			l = e->c.val_ptr;
+			l_ctx = e->c.val_ctx;
+		} else {
+			l = deref(q, &e->c, q->st.cur_ctx);
+			l_ctx = q->latest_ctx;
+		}
+	}
+
+	if (is_var(l))
+		return member_rest(q, p1, p1_ctx, l, l_ctx);
+
+	if (!is_list(l))
+		return false;
+
+	PROLOG_LIST_HANDLER(l);
+	cell *h = PROLOG_LIST_HEAD(l);
+	h = deref(q, h, l_ctx);
+	pl_ctx h_ctx = q->latest_ctx;
+	cell *t = PROLOG_LIST_TAIL(l);
+	t = deref(q, t, l_ctx);
+	pl_ctx t_ctx = q->latest_ctx;
+
+	// No choicepoint when nothing can follow, so member(X, [a]) stays deterministic as first-argument indexing has it
+
+	if (is_list(t) || is_var(t)) {
+		member_save(q, e, t, t_ctx);
+		CHECKED(push_choice(q));
+	}
+
+	return unify(q, p1, p1_ctx, h, h_ctx);
+}
+
 bool bif_sys_jump_if_nil_2(query *q)
 {
 	GET_FIRST_ARG(p1,any);
@@ -1944,6 +2021,7 @@ builtins g_control_bifs[] =
 	{"$succeed_on_retry", 4, bif_sys_succeed_on_retry_2, NULL, false, false, BLAH},
 	{"$jump", 1, bif_sys_jump_1, NULL, false, false, BLAH},
 	{"$jump_if_nil", 2, bif_sys_jump_if_nil_2, "+term,+integer", false, false, BLAH},
+	{"$member", 3, bif_sys_member_3, "?term,?term,-var", false, false, BLAH},
 	{"$abort", 0, bif_sys_abort_0, NULL, false, false, BLAH},
 
 	{0}
