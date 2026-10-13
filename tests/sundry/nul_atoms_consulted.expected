@@ -1,0 +1,7 @@
+'\x0\' 1
+'a\x0\b' 3
+'\x0\' 1
+'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x0\b' 42
+f('\x0\',x)
+'' 0
+found

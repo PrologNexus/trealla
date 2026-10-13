@@ -4582,9 +4582,6 @@ static bool check_space_before_function(parser *p, int ch, const char *src)
 
 static bool contains_null(const char *src, size_t len)
 {
-	if (!*src)
-		return false;
-
 	for (size_t i = 0; i < len; i++) {
 		if (!*src++)
 			return true;
@@ -6034,7 +6031,8 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			feclearexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
 #endif
 		} else if (!p->is_string
-			&& (!p->is_quoted || is_func || p->is_op || p->is_var || p->is_consulting
+			&& (!p->is_quoted || is_func || p->is_op || p->is_var
+			|| (p->is_consulting && !contains_null(SB_cstr(p->token), SB_strlen(p->token))) // interning stops at a NUL
 			|| (get_builtin(p->pl, SB_cstr(p->token), SB_strlen(p->token), 0, &found, NULL), found)
 			|| !SB_strcmp(p->token, "[]"))
 			) {
