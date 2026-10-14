@@ -24,7 +24,9 @@ Options are those of SWI-Prolog, less proxies and keep-alive:
   * size(-Size): the content length, when the reply gives one.
   * version(-Major-Minor): of the reply.
   * redirect(+Bool), max_redirect(+Max): redirects are followed, ten at
-    most, unless redirect(false).
+    most, unless redirect(false). A redirect to another scheme, host or
+    port drops authorization/1 and the Authorization, Proxy-Authorization
+    and Cookie request headers.
   * timeout(+Seconds): on the connection's reads.
   * cacert_file(+File): trust the CAs in File for https instead of the
     system store. cert_verify_hook(cert_accept_any) skips verifying the
@@ -69,7 +71,8 @@ http_open_(Parts, Stream, Options, Visited) :-
 		parts_url(Parts2, URL2),
 		Visited2 = [URL|Visited],
 		check_redirect(URL2, Visited2, Options),
-		redirect_options(Code, Options, Options2),
+		redirect_options(Code, Options, Options1),
+		cross_origin_options(Parts, Parts2, Options1, Options2),
 		http_open_(Parts2, Stream, Options2, Visited2)
 	;	(memberchk(status_code(_), Options) ; between(200, 299, Code))
 	->	body_stream(S, Method, Code, Fields, Stream),
@@ -223,6 +226,20 @@ redirect_options(_, Options0, Options) :-
 
 post_option(post(_)).
 method_option(method(_)).
+
+% Credentials go only to the origin they were given for, as in Fetch...
+
+cross_origin_options(url(Scheme, Host, Port, _), url(Scheme, Host2, Port, _), Options, Options) :-
+	lower_chars(Host, H), lower_chars(Host2, H),
+	!.
+cross_origin_options(_, _, Options0, Options) :-
+	exclude(credential_option, Options0, Options).
+
+credential_option(authorization(_)).
+credential_option(request_header(Name=_)) :-
+	text_chars(Name, Cs),
+	lower_chars(Cs, Ls),
+	memberchk(Ls, ["authorization", "proxy-authorization", "cookie"]).
 
 connect(url(Scheme, Host, Port, _), S, Options) :-
 	atom_chars(HostA, Host),
