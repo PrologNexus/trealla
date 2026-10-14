@@ -1,0 +1,5 @@
+false-[1.23e+20,1.0e-05,1.0e+15,100.0,5.0e-324,-1.5e-07]
+true-[1.23e20,1.0e-5,1.0e15,100.0,5.0e-324,-1.5e-7]
+1.0e100 1.0e100 1.000000e+100 1e+100
+[true]
+error(domain_error(flag_value,float_representation_concise+maybe),set_prolog_flag/2)

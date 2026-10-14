@@ -16,10 +16,10 @@
 ?- setup_call_cleanup(true, (read(G_0), G_0, read(G_1), G_1), op(0,xfy,e)).
    inputs("op(9,xfy,e).\n1.2e 3 = e(X,Y)."), peeks("\n"), G_0 = op(9,xfy,e), G_1 = (e(1.2,3) = e(1.2,3)).
 
-% s#53: the form of a float is left open; '1.0e+100' is the page's example
+% s#53: the form of a float is left open; the page's example is '1.0e+100', Scryer's '1.0e100'
 
 ?- read(G_0), G_0.
-   inputs("writeq(1.0e100)."), peeks("\n"), outputs("1.0e+100"), G_0 = writeq(1.0e100).
+   inputs("writeq(1.0e100)."), peeks("\n"), outputs("1.0e100"), G_0 = writeq(1.0e100).
 
 ?- read(G_0), G_0.
    inputs("float(1.0ee9)."), peeks("\n"), syntax_error(...).

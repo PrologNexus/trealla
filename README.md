@@ -365,6 +365,16 @@ type_error when used in places not expected. The *imath* library has a bug
 whereby printing large numbers becomes exponentially slower (100K+ digits).
 
 
+Floats
+======
+
+Floats are written with the fewest digits that read back as the same
+double, and with a bare exponent: *1.0e15*, *1.0e-5*. Setting
+*set_prolog_flag(float_representation_concise,false)* gives the C-style
+exponent that SWI writes instead: *1.0e+15*, *1.0e-05*. The flag is
+global and doesn't affect the *~e* and *~g* format directives.
+
+
 Strings
 =======
 

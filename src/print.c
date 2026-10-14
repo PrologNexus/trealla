@@ -601,9 +601,9 @@ static void format_double(double num, char *res, size_t reslen)
 	format_double_exact(num, res, reslen);
 }
 
-// Make sure we have a trailing dot if needed...
+// Make sure we have a trailing dot if needed, and a bare exponent if concise...
 
-static void reformat_float(char *tmpbuf, size_t tmplen, pl_flt v)
+static void reformat_float(char *tmpbuf, size_t tmplen, pl_flt v, bool concise)
 {
 	format_double(v, tmpbuf, tmplen);
 	char tmpbuf2[256];
@@ -623,6 +623,23 @@ static void reformat_float(char *tmpbuf, size_t tmplen, pl_flt v)
 	} else if (*src == ',') {
 		*dst++ = '.';
 		src++;
+	}
+
+	while (*src && (*src != 'e'))
+		*dst++ = *src++;
+
+	// Exponent as 1.0e15 and 1.0e-5, as Scryer writes it, without %g's plus sign and zero padding.
+
+	if ((*src == 'e') && concise) {
+		*dst++ = *src++;
+
+		if (*src == '+')
+			src++;
+		else if (*src == '-')
+			*dst++ = *src++;
+
+		while ((src[0] == '0') && isdigit((unsigned char)src[1]))
+			src++;
 	}
 
 	while (*src)
@@ -2385,7 +2402,7 @@ static bool print_term_dispatch(query *q, cell *c, pl_ctx c_ctx, int running, in
 		char tmpbuf[256];
 
 		if (!q->json && !isnan(c->val_float) && !isinf(c->val_float))
-			reformat_float(tmpbuf, sizeof(tmpbuf), c->val_float);
+			reformat_float(tmpbuf, sizeof(tmpbuf), c->val_float, q->pl->float_concise);
 		else
 			snprintf(tmpbuf, sizeof(tmpbuf), "%.*g", 17, get_float(c));
 

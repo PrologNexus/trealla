@@ -2746,6 +2746,10 @@ static bool bif_sys_current_prolog_flag_2(query *q)
 		cell tmp;
 		make_atom(&tmp, q->pl->tabling ? g_true_s : g_false_s);
 		return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
+	} else if (!CMP_STRING_TO_CSTR(q, p1, "float_representation_concise")) {
+		cell tmp;
+		make_atom(&tmp, q->pl->float_concise ? g_true_s : g_false_s);
+		return unify(q, p2, p2_ctx, &tmp, q->st.cur_ctx);
 	} else if (!CMP_STRING_TO_CSTR(q, p1, "max_table_answer_size")) {
 		cell tmp;
 		if (q->pl->tbl_max_answer_size)
@@ -3084,6 +3088,14 @@ static bool bif_iso_set_prolog_flag_2(query *q)
 			q->pl->global_bb = true;
 		else if (!CMP_STRING_TO_CSTR(q, p2, "false") || !CMP_STRING_TO_CSTR(q, p2, "off"))
 			q->pl->global_bb = false;
+		else {
+			return flag_value_error(q, p1, p2);
+		}
+	} else if (!CMP_STRING_TO_CSTR(q, p1, "float_representation_concise")) {
+		if (!CMP_STRING_TO_CSTR(q, p2, "true") || !CMP_STRING_TO_CSTR(q, p2, "on"))
+			q->pl->float_concise = true;
+		else if (!CMP_STRING_TO_CSTR(q, p2, "false") || !CMP_STRING_TO_CSTR(q, p2, "off"))
+			q->pl->float_concise = false;
 		else {
 			return flag_value_error(q, p1, p2);
 		}
@@ -7518,6 +7530,7 @@ static void load_flags(query *q)
 #endif
 	SB_sprintf(pr, "'$current_prolog_flag'(%s, %s).\n", "global_bb", q->pl->global_bb?"true":"false");
 	SB_sprintf(pr, "'$current_prolog_flag'(%s, %s).\n", "tabling", q->pl->tabling?"true":"false");
+	SB_sprintf(pr, "'$current_prolog_flag'(%s, %s).\n", "float_representation_concise", q->pl->float_concise?"true":"false");
 
 	if (q->pl->tbl_max_answer_size) {
 		SB_sprintf(pr, "'$current_prolog_flag'(%s, %u).\n", "max_table_answer_size", q->pl->tbl_max_answer_size);

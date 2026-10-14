@@ -1360,6 +1360,7 @@ struct prolog_ {
 	bool in_goal_expansion:1;
 	bool global_bb:1;
 	bool tabling:1;			// tabling flag: enabled by default
+	bool float_concise:1;		// float_representation_concise flag: 1.0e15, not 1.0e+15
 	void *tbl_shared;
 	bool tbl_any_specs;
 
