@@ -29,7 +29,8 @@
 %    or just binary
 %
 % A failed check throws `ssl_error(Reason, Address)`, Reason one of `certificate_verify_failed`,
-% `hostname_mismatch`, `ip_address_mismatch`, `cacert_load_failed` or `handshake_failed`.
+% `hostname_mismatch`, `ip_address_mismatch`, `cacert_load_failed` or `handshake_failed`,
+% or `unavailable` without SSL support or, with verify(true), on OpenSSL older than 1.0.2.
 %
 % The socket already exists by the time options are applied, so an
 % option error must not leak the fd and the stream slot. Before this,

@@ -32,6 +32,16 @@ static SSL_CTX *g_ctx = NULL;
 #define TLS_SERVER_METHOD_FUNC SSLv23_server_method
 #define TLS_CLIENT_METHOD_FUNC SSLv23_client_method
 #endif
+
+// Before 1.0.2 OpenSSL can't check a certificate names the host, so
+// verify(true) is refused there rather than half done.
+
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+#define TLS_CHECKS_HOST 1
+#else
+#define TLS_CHECKS_HOST 0
+#define SSL_is_server(s) ((s)->server)
+#endif
 #endif
 
 #include "history.h"
@@ -415,6 +425,11 @@ static void tpl_set_blocking(stream *str)
 
 static SSL *client_ssl(int fd, const char *hostname, bool verify, const char *cafile, const char **reason)
 {
+	if (verify && !TLS_CHECKS_HOST) {
+		*reason = "unavailable";
+		return NULL;
+	}
+
 	SSL_CTX *ctx = SSL_CTX_new(TLS_CLIENT_METHOD_FUNC());
 
 	if (!ctx) {
@@ -448,12 +463,14 @@ static SSL *client_ssl(int fd, const char *hostname, bool verify, const char *ca
 	bool is_ip = ip != NULL;
 	ASN1_OCTET_STRING_free(ip);
 
+#if TLS_CHECKS_HOST
 	if (verify) {
 		if (is_ip)
 			X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), hostname);
 		else
-			SSL_set1_host(ssl, hostname);
+			X509_VERIFY_PARAM_set1_host(SSL_get0_param(ssl), hostname, 0);
 	}
+#endif
 
 	if (!is_ip)
 		SSL_set_tlsext_host_name(ssl, hostname);
@@ -462,10 +479,12 @@ static SSL *client_ssl(int fd, const char *hostname, bool verify, const char *ca
 
 	if (SSL_connect(ssl) <= 0) {
 		long v = SSL_get_verify_result(ssl);
+		*reason = v != X509_V_OK ? "certificate_verify_failed" : "handshake_failed";
+#if TLS_CHECKS_HOST
 		*reason = v == X509_V_ERR_HOSTNAME_MISMATCH ? "hostname_mismatch"
 			: v == X509_V_ERR_IP_ADDRESS_MISMATCH ? "ip_address_mismatch"
-			: v != X509_V_OK ? "certificate_verify_failed"
-			: "handshake_failed";
+			: *reason;
+#endif
 		SSL_free(ssl);
 		ERR_clear_error();
 		return NULL;
