@@ -1337,7 +1337,9 @@ static void purge_reclaimed(query *q)
 	while (r) {
 		rule *next = list_next(r);
 
-		if (r->cl.is_purgeable && !clause_holds_instr(q, &r->cl, r)) {
+		// abolish/1 moves clauses here while a reader may still be iterating them.
+
+		if (r->cl.is_purgeable && !r->owner->refcnt && !clause_holds_instr(q, &r->cl, r)) {
 			// reclaim_rule() only drops index entries while the predicate still has clauses,
 			// so an index can still name this rule. query_purge_dirty_list() does the same
 			// before freeing; skipping it leaves the skiplist pointing into freed cells.
