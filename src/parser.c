@@ -5222,7 +5222,84 @@ bool expand_term(parser *p, cell *c)
 	return true;
 }
 
-unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
+typedef struct {
+	pl_idx arg_idx, save_idx;
+	unsigned arity;
+	int entered;
+	bool is_arg_processing, is_consing, last_prefix, last_postfix, prev_operator, this_operator;
+} tok_frame;
+
+typedef struct {
+	tok_frame *v;
+	unsigned cnt, max;
+} tok_stack;
+
+static bool push_frame(tok_stack *ts, const tok_frame *f)
+{
+	if (ts->cnt == ts->max) {
+		unsigned max = ts->max ? ts->max * 2 : 16;
+		tok_frame *v = TPL_realloc(ts->v, sizeof(tok_frame) * max);
+
+		if (!v)
+			return false;
+
+		ts->v = v;
+		ts->max = max;
+	}
+
+	ts->v[ts->cnt++] = *f;
+	return true;
+}
+
+// Set a functor's arity and size once its args are read
+
+static bool finish_functor(parser *p, pl_idx save_idx, unsigned tmp_arity)
+{
+	// Under empty_args, f() reads as '()'(f), as SWI and XSB spell a zero-argument call
+
+	if ((tmp_arity == 1) && p->flags.empty_args && p->last_empty_arglist) {
+		cell *arg = make_a_cell(p);
+
+		if (!arg)
+			return false;
+
+		cell *c = p->cl->cells + save_idx;	// may have moved
+		*arg = *c;
+		arg->num_cells = 1;
+		arg->priority = 0;
+		SET_OP(arg, 0);
+		set_arity(arg, 0);
+		c->tag = TAG_INTERNED;
+		c->flags = 0;
+		c->priority = 0;
+		SET_OP(c, 0);
+		c->val_off = new_atom(p->pl, "()");
+		tmp_arity = 1;
+	}
+
+	cell *c = p->cl->cells + save_idx;
+
+	if (is_cstring(c)) {
+		pl_idx off = new_atom(p->pl, C_STR(p, c));
+
+		if (off == ERR_IDX) {
+			p->error = true;
+			return false;
+		}
+
+		unshare_cell(c);
+		c->tag = TAG_INTERNED;
+		c->flags = 0;
+		c->match = NULL;
+		c->val_off = off;
+	}
+
+	set_arity(c, tmp_arity);
+	c->num_cells = p->cl->cidx - save_idx;
+	return true;
+}
+
+static unsigned tokenize_(parser *p, bool is_arg_processing, bool is_consing, tok_stack *ts)
 {
 	pl_idx arg_idx = p->cl->cidx, save_idx = 0;
 	bool last_op = true, is_func = false, last_num = false;
@@ -5230,8 +5307,10 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 	bool prev_operator = false, this_operator = false;
 	int entered = p->entered;
 	unsigned arity = 1;
+	bool closed = false;
 	p->depth++;
 
+next_token:
 	while (get_token(p, last_op, last_postfix)) {
 		prev_operator = this_operator;
 		this_operator = false;
@@ -5527,63 +5606,31 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			p->start_term = true;
 			p->nesting_parens++;
 			p->entered = '(';
+
+			// Stack the functor's state rather than recurse, so deep nesting can't overflow the C stack
+
+			if (is_func && push_frame(ts, &(tok_frame){arg_idx, save_idx, arity, entered,
+				is_arg_processing, is_consing, last_prefix, last_postfix, prev_operator, this_operator})) {
+				arg_idx = p->cl->cidx;
+				save_idx = 0;
+				arity = 1;
+				entered = '(';
+				is_arg_processing = true;
+				is_consing = false;
+				last_op = true;
+				is_func = last_num = last_bar = last_prefix = last_postfix = false;
+				prev_operator = this_operator = false;
+				continue;
+			}
+
 			unsigned tmp_arity = tokenize(p, is_func, false);
 			last_bar = false;
 
 			if (p->error)
 				break;
 
-			if (is_func) {
-				// f() is how both SWI and XSB spell a zero-argument
-				// call, and the Janus interface is written in it
-				// throughout. ISO has no such term and Trealla has no
-				// way to represent one - functor(X, f, 0) is the atom f
-				// - so under the empty_args flag it reads as '()'(f):
-				// an ordinary compound, distinct from the atom, that
-				// every other part of the system already understands.
-				// The functor is not a possible identifier, so nothing
-				// can collide with it.
-
-				if ((tmp_arity == 1) && p->flags.empty_args && p->last_empty_arglist) {
-					cell *arg = make_a_cell(p);
-
-					if (!arg)
-						break;
-
-					cell *c = p->cl->cells + save_idx;	// may have moved
-					*arg = *c;
-					arg->num_cells = 1;
-					arg->priority = 0;
-					SET_OP(arg, 0);
-					set_arity(arg, 0);
-					c->tag = TAG_INTERNED;
-					c->flags = 0;
-					c->priority = 0;
-					SET_OP(c, 0);
-					c->val_off = new_atom(p->pl, "()");
-					tmp_arity = 1;
-				}
-
-				cell *c = p->cl->cells + save_idx;
-
-				if (is_cstring(c)) {
-					pl_idx off = new_atom(p->pl, C_STR(p, c));
-
-					if (off == ERR_IDX) {
-						p->error = true;
-						break;
-					}
-
-					unshare_cell(c);
-					c->tag = TAG_INTERNED;
-					c->flags = 0;
-					c->match = NULL;
-					c->val_off = off;
-				}
-
-				set_arity(c, tmp_arity);
-				c->num_cells = p->cl->cidx - save_idx;
-			}
+			if (is_func && !finish_functor(p, save_idx, tmp_arity))
+				break;
 
 			is_func = last_op = false;
 			last_num = false;
@@ -5765,6 +5812,12 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 			p->last_empty_arglist = (arg_idx == p->cl->cidx);
 			p->nesting_parens--;
 			analyze_one(p, arg_idx, last_op=false);
+
+			if (ts->cnt) {
+				closed = true;
+				break;
+			}
+
 			return arity;
 		}
 
@@ -6076,8 +6129,43 @@ unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
 		last_bar = false;
 	}
 
+	// Pop back to the enclosing functor
+
+	if (ts->cnt) {
+		const tok_frame *f = &ts->v[--ts->cnt];
+		unsigned tmp_arity = closed ? arity : !p->error;
+		arg_idx = f->arg_idx;
+		save_idx = f->save_idx;
+		arity = f->arity;
+		entered = f->entered;
+		is_arg_processing = f->is_arg_processing;
+		is_consing = f->is_consing;
+		last_prefix = f->last_prefix;
+		last_postfix = f->last_postfix;
+		prev_operator = f->prev_operator;
+		this_operator = f->this_operator;
+		closed = last_bar = false;
+
+		if (!p->error && finish_functor(p, save_idx, tmp_arity)) {
+			is_func = last_op = false;
+			last_num = false;
+			p->start_term = p->last_close = false;
+			goto next_token;
+		}
+
+		ts->cnt = 0;
+	}
+
 	p->depth--;
 	return !p->error ? 1 : 0;
+}
+
+unsigned tokenize(parser *p, bool is_arg_processing, bool is_consing)
+{
+	tok_stack ts = {0};
+	unsigned arity = tokenize_(p, is_arg_processing, is_consing, &ts);
+	TPL_free(ts.v);
+	return arity;
 }
 
 bool run(parser *p, const char *prolog_src, bool dump, query **subq, unsigned int yield_time_in_ms)
